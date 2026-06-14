@@ -322,7 +322,9 @@ fn build_ui(app: &Application) {
                 (p.x, p.y)
             };
             let size = pet::TILE as f64 * scale.get();
+            let half = size / 2.0;
             let (max_x, max_y) = ((total_w - size).max(0.0), (total_h - size).max(0.0));
+            let cat_center = (px + half, py + half);
 
             // Cible à poursuivre. Twitch Heat est prioritaire dès qu'un clic arrive.
             let behavior;
@@ -331,7 +333,7 @@ fn build_ui(app: &Application) {
                 (twx, twy)
             } else if mode == "Sommeil" {
                 behavior = "sommeil";
-                (px, py) // reste sur place → la pose « arrivée » joue le sommeil
+                cat_center // reste sur place → la pose « arrivée » joue le sommeil
             } else if mode == "Autonome" {
                 // Si une fenêtre est focus depuis assez longtemps → mode « dock » :
                 // le chat se promène sous son bord bas, sans monter ni descendre.
@@ -342,41 +344,42 @@ fn build_ui(app: &Application) {
                 if let Some((wx, wy, ww, wh)) = docked {
                     behavior = "dock";
                     let dock_y = ((wy + wh) - orig_y as f64).clamp(0.0, max_y);
-                    let left = (wx - orig_x as f64).clamp(0.0, max_x);
-                    let right = (wx + ww - orig_x as f64 - size).clamp(left, max_x);
                     pet.borrow_mut().y = dock_y; // bloque la hauteur
+                    // Bornes du centre du chat sous la fenêtre.
+                    let cmin = (wx - orig_x as f64 + half).clamp(half, total_w - half);
+                    let cmax = (wx + ww - orig_x as f64 - half).clamp(cmin, total_w - half);
                     wander.2 -= 1.0;
-                    if wander.2 < 0.0 || wander.0 < left || wander.0 > right {
-                        wander.0 = left + util::rand_unit() * (right - left).max(1.0);
+                    if wander.2 < 0.0 || wander.0 < cmin || wander.0 > cmax {
+                        wander.0 = cmin + util::rand_unit() * (cmax - cmin).max(1.0);
                         wander.2 = 60.0 + util::rand_unit() * 100.0;
                     }
-                    (wander.0.clamp(left, right), dock_y)
+                    (wander.0.clamp(cmin, cmax), dock_y + half)
                 } else {
                     behavior = "errance";
-                    // Errance libre : nouvelle cible aléatoire de temps en temps.
+                    // Errance libre : nouvelle cible (centre) aléatoire de temps en temps.
                     wander.2 -= 1.0;
                     if wander.2 < 0.0 {
-                        wander.0 = util::rand_unit() * max_x;
-                        wander.1 = util::rand_unit() * max_y;
+                        wander.0 = half + util::rand_unit() * max_x;
+                        wander.1 = half + util::rand_unit() * max_y;
                         wander.2 = 80.0 + util::rand_unit() * 120.0;
                     }
                     (wander.0, wander.1)
                 }
             } else {
                 behavior = "pelote";
-                // Mode « Pelote ».
+                // Mode « Pelote » : vise (et attrape) le centre de la pelote.
                 let mut t = toy.borrow_mut();
                 if t.active {
-                    if t.update(px, py) {
+                    if t.update(cat_center.0, cat_center.1) {
                         rest = REST_TICKS; // attrapée → le chat se repose
                     }
-                    (t.x, t.y)
+                    t.center()
                 } else if rest > 0 {
                     rest -= 1;
-                    (px, py)
+                    cat_center
                 } else {
                     t.spawn();
-                    (t.x, t.y)
+                    t.center()
                 }
             };
 

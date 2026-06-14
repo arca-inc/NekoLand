@@ -83,14 +83,20 @@ impl Toy {
         ((self.loop_counter % FRAMES) as i32 * 32, 0)
     }
 
-    /// Avance d'un tick. `(pet_x, pet_y)` = coin haut-gauche du chat.
-    /// Renvoie `true` si le chat vient d'attraper la pelote.
-    pub fn update(&mut self, pet_x: f64, pet_y: f64) -> bool {
+    /// Centre de la pelote à l'écran.
+    pub fn center(&self) -> (f64, f64) {
+        (self.x + self.size / 2.0, self.y + self.size / 2.0)
+    }
+
+    /// Avance d'un tick. `(cat_cx, cat_cy)` = **centre** du chat.
+    /// Renvoie `true` si le chat vient d'attraper la pelote (centre à centre).
+    pub fn update(&mut self, cat_cx: f64, cat_cy: f64) -> bool {
         if !self.active {
             return false;
         }
 
-        if (pet_x - self.x).abs() <= CATCH && (pet_y - self.y).abs() <= CATCH {
+        let (tcx, tcy) = self.center();
+        if (cat_cx - tcx).abs() <= CATCH && (cat_cy - tcy).abs() <= CATCH {
             self.hide();
             return true;
         }

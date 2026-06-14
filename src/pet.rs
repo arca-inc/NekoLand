@@ -146,9 +146,13 @@ impl Pet {
         }
     }
 
+    /// `target` est la position visée par le **centre** du chat (pas son coin).
     fn move_toward(&mut self, target_x: f64, target_y: f64) {
-        let delta_x = target_x - self.x;
-        let delta_y = self.y - target_y; // repère y inversé, comme dans Pet.ts
+        let half = self.sprite / 2.0;
+        let cx = self.x + half;
+        let cy = self.y + half;
+        let delta_x = target_x - cx;
+        let delta_y = cy - target_y; // repère y inversé, comme dans Pet.ts
         let theta = delta_y.atan2(delta_x);
         let distance = (delta_x * delta_x + delta_y * delta_y).sqrt();
 
