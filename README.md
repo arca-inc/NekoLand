@@ -106,8 +106,9 @@ disposition des moniteurs (union), le catalogue (skins/pelotes) et la présence 
 fenêtre focus (classe, titre, géométrie, durée de focus).
 
 **Debug visuel** (overlay) : trace en direct la **ligne de trajet** chat → cible,
-un **marqueur** sur la cible, et un **libellé de statut** près du chat
-(`comportement · animation`).
+un **marqueur** sur la cible, un **libellé de statut** près du chat
+(`comportement · animation`), et — en mode Autonome — un **compte à rebours avant
+dock** en haut-droite de la fenêtre focus (`dock dans Ns`, puis `● DOCK`).
 
 ## Compatibilité
 

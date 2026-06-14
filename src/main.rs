@@ -47,6 +47,9 @@ struct Dbg {
     on: bool,
     target: (f64, f64),
     behavior: &'static str,
+    /// Fenêtre focus + secondes restantes avant dock (`<= 0` = déjà docké).
+    /// `None` hors mode Autonome ou sans fenêtre focus.
+    dock: Option<(f64, f64, f64, f64, i64)>,
 }
 
 fn main() -> glib::ExitCode {
@@ -125,6 +128,7 @@ fn build_ui(app: &Application) {
         on: debug,
         target: (total_w / 2.0, total_h / 2.0),
         behavior: "",
+        dock: None,
     }));
     let sprite_size = pet::TILE as f64 * cfg.scale;
 
@@ -234,6 +238,25 @@ fn build_ui(app: &Application) {
                     cr.set_font_size(13.0);
                     cr.move_to(cx + half + 4.0, cy - half - 4.0);
                     let _ = cr.show_text(&format!("{} · {}", d.behavior, p.current_clip()));
+
+                    // Compte à rebours avant dock, en haut-droite de la fenêtre focus.
+                    if let Some((wx, wy, ww, _wh, rem)) = d.dock {
+                        let rx = wx + ww - off_x;
+                        let ry = wy - off_y;
+                        let label = if rem > 0 {
+                            format!("dock dans {rem}s")
+                        } else {
+                            "● DOCK".to_string()
+                        };
+                        cr.set_font_size(13.0);
+                        let tw = cr.text_extents(&label).map(|e| e.width()).unwrap_or(60.0);
+                        cr.set_source_rgba(0.0, 0.0, 0.0, 0.6);
+                        cr.rectangle(rx - tw - 10.0, ry + 2.0, tw + 8.0, 19.0);
+                        let _ = cr.fill();
+                        cr.set_source_rgba(1.0, 0.85, 0.2, 0.97);
+                        cr.move_to(rx - tw - 6.0, ry + 16.0);
+                        let _ = cr.show_text(&label);
+                    }
                 }
             });
         }
@@ -385,11 +408,21 @@ fn build_ui(app: &Application) {
 
             pet.borrow_mut().update(target, State::Chase);
 
-            // Partage cible + comportement pour le debug visuel.
+            // Partage cible + comportement + compte à rebours dock pour le debug.
             if debug {
+                let dock = if mode == "Autonome" {
+                    let f = focus.lock().unwrap();
+                    f.valid.then(|| {
+                        let rem = DOCK_DELAY.as_secs() as i64 - f.since.elapsed().as_secs() as i64;
+                        (f.x, f.y, f.w, f.h, rem)
+                    })
+                } else {
+                    None
+                };
                 let mut d = dbg.borrow_mut();
                 d.target = target;
                 d.behavior = behavior;
+                d.dock = dock;
             }
 
             for area in &areas {
