@@ -89,8 +89,16 @@ jobs:
           path: nekoland-windows.zip
 
   build-macos:
-    name: Build macOS
-    runs-on: macos-latest
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13   # runner Intel  → binaire x86_64
+            arch: x86_64
+          - runner: macos-14   # runner Apple Silicon → binaire arm64
+            arch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -111,14 +119,14 @@ jobs:
           mkdir -p bundle-macos/assets
           cp -r assets/* bundle-macos/assets/
           cp target/release/nekoland bundle-macos/
-          tar -czvf nekoland-macos.tar.gz -C bundle-macos .
+          tar -czvf nekoland-macos-${{ matrix.arch }}.tar.gz -C bundle-macos .
 
       - name: Upload Artifact
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: nekoland-macos
-          path: nekoland-macos.tar.gz
+          name: nekoland-macos-${{ matrix.arch }}
+          path: nekoland-macos-${{ matrix.arch }}.tar.gz
 
   create_release:
     name: Create GitHub Release
@@ -149,10 +157,11 @@ jobs:
           path: release-assets
         continue-on-error: true
 
-      - name: Download macOS Artifact
+      - name: Download macOS Artifacts (x86_64 + arm64)
         uses: actions/download-artifact@v4
         with:
-          name: nekoland-macos
+          pattern: nekoland-macos-*
+          merge-multiple: true
           path: release-assets
         continue-on-error: true
 
