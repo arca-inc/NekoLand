@@ -1,6 +1,6 @@
-# neko_rust
+# NekoLand
 
-Neko desktop natif, en Rust. Un chat animé poursuit une **pelote de laine** qui rebondit sur le bureau ; quand il l'attrape, il se repose puis une nouvelle pelote réapparaît. En présence d'un canal **Twitch Heat**, il chasse en priorité les clics des viewers sur le stream.
+NekoLand natif, en Rust. Un chat animé poursuit une **pelote de laine** qui rebondit sur le bureau ; quand il l'attrape, il se repose puis une nouvelle pelote réapparaît. En présence d'un canal **Twitch Heat**, il chasse en priorité les clics des viewers sur le stream.
 
 ## Comportement (gameplay)
 
@@ -27,4 +27,4 @@ Crédits : The Neko Archive Project & Neko (software).
 ```sh
 ./install.sh
 ```
-Compile en release, installe le binaire dans `~/.local/bin/neko-desktop`, copie les assets, et crée les entrées `.desktop` (applications + autostart XDG).
+Compile en release, installe le binaire dans `~/.local/bin/nekoland`, copie les assets, et crée les entrées `.desktop` (applications + autostart XDG).

@@ -24,10 +24,10 @@ impl NekoTray {
 
 impl Tray for NekoTray {
     fn id(&self) -> String {
-        "neko_rust".into()
+        "nekoland".into()
     }
     fn title(&self) -> String {
-        "Neko".into()
+        "NekoLand".into()
     }
     fn icon_name(&self) -> String {
         "face-smile".into() // fallback si l'hôte ignore le pixmap

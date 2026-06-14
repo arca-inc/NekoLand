@@ -719,7 +719,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "neko_rust"
+name = "nekoland"
 version = "0.1.0"
 dependencies = [
  "futures-util",

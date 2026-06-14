@@ -1,6 +1,6 @@
-# neko_rust
+# NekoLand
 
-Nativer Desktop-Neko, geschrieben in Rust. Eine animierte Katze jagt ein **Wollknäuel**, das über den Desktop hüpft; wenn sie es fängt, ruht sie sich aus, bevor ein neues Knäuel erscheint. Wenn ein **Twitch Heat**-Kanal aktiv ist, jagt sie vorrangig die Klicks der Zuschauer im Stream.
+Nativer NekoLand, geschrieben in Rust. Eine animierte Katze jagt ein **Wollknäuel**, das über den Desktop hüpft; wenn sie es fängt, ruht sie sich aus, bevor ein neues Knäuel erscheint. Wenn ein **Twitch Heat**-Kanal aktiv ist, jagt sie vorrangig die Klicks der Zuschauer im Stream.
 
 ## Verhalten (Gameplay)
 
@@ -27,4 +27,4 @@ Credits: The Neko Archive Project & Neko (software).
 ```sh
 ./install.sh
 ```
-Kompiliert im Release-Modus, installiert das Binary nach `~/.local/bin/neko-desktop`, kopiert die Assets und erstellt `.desktop`-Einträge.
+Kompiliert im Release-Modus, installiert das Binary nach `~/.local/bin/nekoland`, kopiert die Assets und erstellt `.desktop`-Einträge.

@@ -7,8 +7,8 @@ pub fn t(key: &str) -> String {
     let is_de = lang.starts_with("de");
 
     let text = match key {
-        "dashboard_title" => if is_fr { "Neko Dashboard" } else if is_de { "Neko Dashboard" } else { "Neko Dashboard" },
-        "app_title" => if is_fr { "Contrôle Neko" } else if is_de { "Neko Steuerung" } else { "Neko Control" },
+        "dashboard_title" => if is_fr { "Dashboard NekoLand" } else if is_de { "NekoLand Dashboard" } else { "NekoLand Dashboard" },
+        "app_title" => if is_fr { "Contrôle NekoLand" } else if is_de { "NekoLand Steuerung" } else { "NekoLand Control" },
         "mode" => if is_fr { "Comportement (Mode)" } else if is_de { "Verhalten (Modus)" } else { "Behavior (Mode)" },
         "skin" => if is_fr { "Apparence (Skin)" } else if is_de { "Aussehen (Skin)" } else { "Appearance (Skin)" },
         "toy" => if is_fr { "Pelote (Jouet)" } else if is_de { "Spielzeug (Item)" } else { "Toy (Item)" },

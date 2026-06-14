@@ -1,6 +1,6 @@
-# neko_rust
+# NekoLand
 
-Native desktop Neko, written in Rust. An animated cat chases a **yarn ball** bouncing across the desktop; when caught, the cat rests before a new ball appears. If a **Twitch Heat** channel is active, it prioritizes chasing viewers' clicks on the stream.
+Native desktop NekoLand, written in Rust. An animated cat chases a **yarn ball** bouncing across the desktop; when caught, the cat rests before a new ball appears. If a **Twitch Heat** channel is active, it prioritizes chasing viewers' clicks on the stream.
 
 ## Behavior (Gameplay)
 
@@ -37,9 +37,9 @@ Credits: The Neko Archive Project & Neko (software).
 ```sh
 ./install.sh
 ```
-Compiles in release mode, installs the binary to `~/.local/bin/neko-desktop`, copies assets to `~/.local/share/neko-desktop/assets` (auto-resolved by `assets_dir()`), and creates `.desktop` entries (applications + XDG autostart).
+Compiles in release mode, installs the binary to `~/.local/bin/nekoland`, copies assets to `~/.local/share/nekoland/assets` (auto-resolved by `assets_dir()`), and creates `.desktop` entries (applications + XDG autostart).
 
 **Hyprland** does not read XDG autostart by default — add this to `~/.config/hypr/hyprland.conf`:
 ```
-exec-once = ~/.local/bin/neko-desktop
+exec-once = ~/.local/bin/nekoland
 ```
