@@ -117,26 +117,30 @@ fn build_ui(app: &Application) {
     }
 
     // ---- Fond de fenêtre transparent (sinon l'overlay masque tout) ----
-    let provider = gtk::CssProvider::new();
-    // `!important` est nécessaire : certains thèmes GTK posent un fond de fenêtre
-    // avec `!important`, qu'une règle normale ne peut pas battre (quelle que soit
-    // la priorité du provider). Comme le sélecteur est scopé à `.transparent-overlay`,
-    // le dashboard (classe `.dashboard`) n'est pas affecté et garde son fond plein.
+    // NB : surtout PAS de `!important` ici — le parseur CSS de GTK4 le rejette
+    // (« Junk at end of value »), ce qui invalide toute la règle et laisse le fond
+    // opaque du thème (p.ex. Adwaita blanc quand le thème système n'a pas de
+    // variante GTK4). La priorité USER suffit à passer devant le thème (200).
+    // Scopé à `.transparent-overlay` pour ne pas affecter le dashboard (`.dashboard`).
     // `background-image: none` neutralise les dégradés/motifs posés par le thème.
+    let provider = gtk::CssProvider::new();
     provider.load_from_data(
         "window.transparent-overlay, \
          window.transparent-overlay.background, \
          window.transparent-overlay .background, \
          .transparent-overlay { \
-            background: transparent !important; \
-            background-color: transparent !important; \
-            background-image: none !important; \
+            background: transparent; \
+            background-color: transparent; \
+            background-image: none; \
          }",
     );
+    // Au-dessus de USER (800) : GTK4 n'a pas de `!important`, donc le seul moyen de
+    // passer devant le `~/.config/gtk-4.0/gtk.css` éventuel de l'utilisateur (chargé
+    // lui aussi à USER) est d'avoir un numéro de priorité strictement supérieur.
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_USER,
+        gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
     );
 
     // ---- État partagé Twitch <-> GTK (coordonnées dans l'espace global) ----
