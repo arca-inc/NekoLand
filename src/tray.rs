@@ -30,7 +30,7 @@ impl Tray for NekoTray {
         "NekoLand".into()
     }
     fn icon_name(&self) -> String {
-        "face-smile".into() // fallback si l'hôte ignore le pixmap
+        "".into() // empty string forces the host to use icon_pixmap
     }
     fn icon_pixmap(&self) -> Vec<Icon> {
         self.icon.clone()

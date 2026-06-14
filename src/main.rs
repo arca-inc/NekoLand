@@ -551,14 +551,36 @@ fn assets_dir() -> PathBuf {
             }
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        candidates.push(PathBuf::from(home).join(".local/share/neko-desktop/assets"));
-    }
+
     candidates.push(PathBuf::from("/usr/share/neko-desktop/assets"));
-    candidates
-        .into_iter()
-        .find(|p| p.is_dir())
-        .unwrap_or_else(|| PathBuf::from("assets"))
+
+    let mut default_user_dir = None;
+    #[cfg(target_os = "windows")]
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        default_user_dir = Some(PathBuf::from(appdata).join("neko-desktop").join("assets"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    if let Ok(home) = std::env::var("HOME") {
+        default_user_dir = Some(PathBuf::from(home).join(".local/share/neko-desktop/assets"));
+    }
+
+    if let Some(ref d) = default_user_dir {
+        candidates.push(d.clone());
+    }
+
+    if let Some(found) = candidates.iter().find(|p| p.join("pets").is_dir()) {
+        return found.clone();
+    }
+
+    let target = default_user_dir.unwrap_or_else(|| PathBuf::from("assets"));
+    let _ = std::fs::create_dir_all(&target);
+    
+    let zip_data = include_bytes!("../default_resources.zip");
+    if let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(zip_data)) {
+        let _ = archive.extract(&target);
+    }
+    
+    target
 }
 
 /// Noms (sans extension) des `.png` d'un répertoire, triés — pour les menus tray.
