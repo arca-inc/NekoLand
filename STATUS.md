@@ -1,20 +1,22 @@
 # Platform status
 
-État des plateformes au moment présent. NekoLand est jeune : le cœur est
-fonctionnel sous Linux/Wayland, le reste est en cours.
+Current per-platform status. NekoLand is young: the core is functional on
+Linux/Wayland, the rest is in progress.
 
-| Plateforme | État | Détails |
+> 🇫🇷 [STATUS_FR.md](STATUS_FR.md) · 🇩🇪 [STATUS_DE.md](STATUS_DE.md)
+
+| Platform | Status | Details |
 |---|---|---|
-| **Linux — Wayland / Hyprland** | ✅ **Testé & fonctionnel** | Overlay transparent always-on-top, click-through, multi-moniteur, tray, dashboard, modes (Pelote / Autonome / Souris / Sommeil), mode streamer Twitch. |
-| Linux — X11 / autres compositeurs | ⚠️ Non testé | Devrait marcher via GTK4 ; le mode « dock » et « Souris » dépendent de `hyprctl` (dégradation gracieuse sinon). |
-| **Windows** | 🚧 **En cours — pas encore fonctionnel** | Le binaire se compile (MinGW/GTK4) ; bundling des DLL du runtime GTK4 en cours de fiabilisation. Pas encore validé sur une machine réelle. |
-| **macOS** | 🚧 **En cours — pas encore fonctionnel** | Binaire universel (Intel + Apple Silicon) en cours de mise au point dans la CI ; les dylibs GTK4 ne sont pas encore embarquées (nécessite `brew install gtk4`). Pas encore validé. |
+| **Linux — Wayland / Hyprland** | ✅ **Tested & working** | Transparent always-on-top overlay, click-through, multi-monitor, tray, dashboard, modes (Yarn / Autonomous / Mouse / Sleep), Twitch streamer mode. |
+| Linux — X11 / other compositors | ⚠️ Untested | Should work via GTK4; the "dock" and "Mouse" modes rely on `hyprctl` (graceful fallback otherwise). |
+| **Windows** | 🚧 **In progress — not yet working** | The binary compiles (MinGW/GTK4); bundling the GTK4 runtime DLLs is being stabilized. Not yet validated on a real machine. |
+| **macOS** | 🚧 **In progress — not yet working** | Universal binary (Intel + Apple Silicon) is being sorted out in CI; the GTK4 dylibs are not bundled yet (requires `brew install gtk4`). Not yet validated. |
 
-## Résumé
+## Summary
 
-- **Linux Wayland/Hyprland** est la cible de référence : testé et fonctionnel.
-- **Windows** et **macOS** sont **expérimentaux** : la compilation est traitée
-  côté CI, mais le packaging autonome et la validation sur machine réelle
-  ne sont **pas terminés**. Ne pas considérer comme utilisables pour l'instant.
+- **Linux Wayland/Hyprland** is the reference target: tested and working.
+- **Windows** and **macOS** are **experimental**: compilation is handled in CI,
+  but self-contained packaging and real-machine validation are **not done**.
+  Do not consider them usable yet.
 
-Voir `.github/workflows/release.yml` pour l'état des builds CI par plateforme.
+See `.github/workflows/release.yml` for the CI build status per platform.
