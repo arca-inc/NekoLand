@@ -17,7 +17,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config libgtk-4-dev libwayland-dev wayland-protocols libpango1.0-dev libcairo2-dev libglib2.0-dev
+          sudo apt-get install -y meson ninja-build pkg-config libgtk-4-dev libwayland-dev wayland-protocols libpango1.0-dev libcairo2-dev libglib2.0-dev libdbus-1-dev
           git clone https://github.com/wmww/gtk4-layer-shell.git
           cd gtk4-layer-shell
           meson setup -Dintrospection=false -Dvapi=false build
@@ -66,12 +66,13 @@ jobs:
       # The build will likely fail here because gtk4-layer-shell relies on Wayland headers.
       # Setting continue-on-error to true so it doesn't break the whole pipeline while Windows support is a WIP.
       - name: Build
+        id: build
         shell: msys2 {0}
         run: cargo build --release --target x86_64-pc-windows-gnu
         continue-on-error: true
 
       - name: Create Bundle
-        if: success()
+        if: steps.build.outcome == 'success'
         run: |
           mkdir bundle-windows
           cp -r assets bundle-windows/assets
@@ -79,7 +80,7 @@ jobs:
           Compress-Archive -Path bundle-windows/* -DestinationPath nekoland-windows.zip
 
       - name: Upload Artifact
-        if: success()
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: nekoland-windows
