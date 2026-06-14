@@ -123,17 +123,24 @@ fn build_ui(app: &Application) {
     // variante GTK4). La priorité USER suffit à passer devant le thème (200).
     // Scopé à `.transparent-overlay` pour ne pas affecter le dashboard (`.dashboard`).
     // `background-image: none` neutralise les dégradés/motifs posés par le thème.
+    // `NEKO_BG` permet de forcer/diagnostiquer la couleur de fond de l'overlay
+    // (ex. `NEKO_BG=red` pour vérifier que le CSS s'applique bien). Défaut : transparent.
+    let bg = std::env::var("NEKO_BG").unwrap_or_else(|_| "transparent".to_string());
+    // On cible aussi `.transparent-overlay *` : certains thèmes (souvent copiés dans
+    // ~/.config/gtk-4.0/gtk.css) peignent un node enfant (box, *) plutôt que `window`,
+    // ce qui laissait l'overlay opaque même avec le node `window` rendu transparent.
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(
+    provider.load_from_data(&format!(
         "window.transparent-overlay, \
          window.transparent-overlay.background, \
          window.transparent-overlay .background, \
-         .transparent-overlay { \
-            background: transparent; \
-            background-color: transparent; \
+         .transparent-overlay, \
+         .transparent-overlay * {{ \
+            background: {bg}; \
+            background-color: {bg}; \
             background-image: none; \
-         }",
-    );
+         }}"
+    ));
     // Au-dessus de USER (800) : GTK4 n'a pas de `!important`, donc le seul moyen de
     // passer devant le `~/.config/gtk-4.0/gtk.css` éventuel de l'utilisateur (chargé
     // lui aussi à USER) est d'avoir un numéro de priorité strictement supérieur.
