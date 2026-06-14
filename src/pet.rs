@@ -120,6 +120,11 @@ impl Pet {
         self.sprite = sprite;
     }
 
+    /// Nom de l'animation en cours (pour le debug visuel).
+    pub fn current_clip(&self) -> &'static str {
+        self.current
+    }
+
     /// Frame courante en **pixels** dans le sprite-sheet (coin haut-gauche de la
     /// tuile 32×32 à blitter).
     pub fn current_frame(&self) -> (i32, i32) {

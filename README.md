@@ -105,6 +105,10 @@ disposition des moniteurs (union), le catalogue (skins/pelotes) et la présence 
 (`errance`/`dock`/`pelote`/`sommeil`/`twitch`), position du chat, cible, et la
 fenêtre focus (classe, titre, géométrie, durée de focus).
 
+**Debug visuel** (overlay) : trace en direct la **ligne de trajet** chat → cible,
+un **marqueur** sur la cible, et un **libellé de statut** près du chat
+(`comportement · animation`).
+
 ## Compatibilité
 
 | Compositeur | État |

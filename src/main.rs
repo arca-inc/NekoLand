@@ -42,6 +42,13 @@ const REST_TICKS: i32 = 25;
 /// Focus continu d'une fenêtre au-delà duquel le chat passe en mode « dock ».
 const DOCK_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// État pour le debug visuel (overlay), partagé tick → fonctions de dessin.
+struct Dbg {
+    on: bool,
+    target: (f64, f64),
+    behavior: &'static str,
+}
+
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
@@ -114,6 +121,11 @@ fn build_ui(app: &Application) {
 
     // ---- Ressources partagées (cellules → reload à chaud possible) ----
     let scale = Rc::new(Cell::new(cfg.scale));
+    let dbg = Rc::new(RefCell::new(Dbg {
+        on: debug,
+        target: (total_w / 2.0, total_h / 2.0),
+        behavior: "",
+    }));
     let sprite_size = pet::TILE as f64 * cfg.scale;
 
     let sprites = load_mapping(&assets, &cfg.skin);
@@ -168,6 +180,7 @@ fn build_ui(app: &Application) {
             let toy = toy.clone();
             let toy_pix = toy_pix.clone();
             let scale = scale.clone();
+            let dbg = dbg.clone();
             area.set_draw_func(move |_a, cr, _w, _h| {
                 let sc = scale.get();
                 // Helper : blit d'une tuile 32×32 à une position globale.
@@ -194,6 +207,33 @@ fn build_ui(app: &Application) {
                     let p = pet.borrow();
                     let (fx, fy) = p.current_frame();
                     blit(pb, fx, fy, p.x, p.y);
+                }
+
+                // Debug visuel : trajet vers la cible + marqueur + statut.
+                let d = dbg.borrow();
+                if d.on {
+                    let p = pet.borrow();
+                    let half = pet::TILE as f64 * sc / 2.0;
+                    let cx = p.x - off_x + half;
+                    let cy = p.y - off_y + half;
+                    let tx = d.target.0 - off_x;
+                    let ty = d.target.1 - off_y;
+
+                    cr.set_line_width(2.0);
+                    cr.set_source_rgba(1.0, 0.3, 0.3, 0.8); // trajet chat → cible
+                    cr.move_to(cx, cy);
+                    cr.line_to(tx, ty);
+                    let _ = cr.stroke();
+                    cr.move_to(tx - 7.0, ty); // croix sur la cible
+                    cr.line_to(tx + 7.0, ty);
+                    cr.move_to(tx, ty - 7.0);
+                    cr.line_to(tx, ty + 7.0);
+                    let _ = cr.stroke();
+
+                    cr.set_source_rgba(0.3, 1.0, 0.5, 0.95); // statut près du chat
+                    cr.set_font_size(13.0);
+                    cr.move_to(cx + half + 4.0, cy - half - 4.0);
+                    let _ = cr.show_text(&format!("{} · {}", d.behavior, p.current_clip()));
                 }
             });
         }
@@ -225,6 +265,7 @@ fn build_ui(app: &Application) {
         let control = control.clone();
         let assets = assets.clone();
         let focus = focus.clone();
+        let dbg = dbg.clone();
         let mut rest: i32 = 0; // ticks de repos restants après une prise
         let mut seen_version: u64 = 0;
         let mut seen_open: u64 = 0;
@@ -340,6 +381,14 @@ fn build_ui(app: &Application) {
             };
 
             pet.borrow_mut().update(target, State::Chase);
+
+            // Partage cible + comportement pour le debug visuel.
+            if debug {
+                let mut d = dbg.borrow_mut();
+                d.target = target;
+                d.behavior = behavior;
+            }
+
             for area in &areas {
                 area.queue_draw();
             }
