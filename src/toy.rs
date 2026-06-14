@@ -4,6 +4,8 @@
 //! l'atteint, elle est attrapée et se cache ; `main` la fait réapparaître après
 //! une pause de repos du chat.
 
+use crate::util::rand_unit;
+
 /// Sheet `wool.png` : 6 frames de 32×32 en ligne (x = frame*32, y = 0).
 const FRAMES: usize = 6;
 const V_STEP: f64 = 16.0; // pas vertical par tick
@@ -146,21 +148,4 @@ impl Toy {
         self.loop_counter = self.loop_counter.wrapping_add(1);
         false
     }
-}
-
-/// Même PRNG léger que pet.rs (xorshift sur l'horloge).
-fn rand_unit() -> f64 {
-    use std::cell::Cell;
-    use std::time::{SystemTime, UNIX_EPOCH};
-    thread_local!(static SEED: Cell<u64> = Cell::new(
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0x9E3779B97F4A7C15) | 1
-    ));
-    SEED.with(|s| {
-        let mut x = s.get();
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        s.set(x);
-        (x >> 11) as f64 / (1u64 << 53) as f64
-    })
 }

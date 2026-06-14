@@ -7,12 +7,18 @@ les clics des viewers sur le stream.
 
 ## Comportement (gameplay)
 
-- **Pelote** (`src/toy.rs`) : rebondit en diagonale sur les bords de la zone
-  globale (union des moniteurs). Le chat la poursuit, l'attrape par collision
+Trois **modes** (commutables à chaud via le tray, persistés) :
+
+- **Pelote** (`src/toy.rs`) : une pelote rebondit en diagonale sur les bords de la
+  zone globale (union des moniteurs). Le chat la poursuit, l'attrape par collision
   (< 24 px), elle se cache, le chat se repose (~2,5 s : alerte → toilette →
   fatigue → sommeil), puis une nouvelle pelote apparaît.
-- **Twitch Heat** : si `NEKO_TWITCH_CHANNEL` est défini et qu'un clic arrive, le
-  chat chasse cette cible au lieu de la pelote.
+- **Autonome** : le chat erre vers des cibles aléatoires et fait la sieste en
+  arrivant (le comportement « indépendant » de l'original).
+- **Sommeil** : le chat reste sur place et dort.
+
+**Twitch Heat** est prioritaire dans tous les modes : si `twitch_channel` est
+configuré et qu'un clic de viewer arrive, le chat chasse cette cible.
 
 ## Pourquoi cette stack
 
@@ -93,6 +99,7 @@ exec-once = ~/.local/bin/neko-desktop
 ## Tray icon
 
 Icône de barre système via `ksni` (StatusNotifierItem). Menus :
+- **Mode** — Pelote / Autonome / Sommeil
 - **Chat** — choisir le skin (liste scannée dans `assets/pets/`)
 - **Pelote** — choisir le jouet (`assets/toys/`)
 - **Taille** — 1× / 1,5× / 2× / 3×

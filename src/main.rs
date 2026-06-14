@@ -13,6 +13,7 @@ mod pet;
 mod toy;
 mod tray;
 mod twitch;
+mod util;
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -78,15 +79,23 @@ fn build_ui(app: &Application) {
 
     let toy = Rc::new(RefCell::new(Toy::new(total_w, total_h, sprite_size)));
     let toy_pix = Rc::new(RefCell::new(load_sprite(&toys_png(&assets, &cfg.toy))));
+    if cfg.mode != "Pelote" {
+        toy.borrow_mut().hide(); // pas de pelote hors du mode jeu
+    }
 
     // ---- Tray icon + état de contrôle partagé (tray ↔ GTK) ----
     let control = Arc::new(Mutex::new(config::Control::from_config(&cfg)));
     let scales = vec![1.0, 1.5, 2.0, 3.0];
+    let modes: Vec<String> = ["Pelote", "Autonome", "Sommeil"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     tray::spawn(
         pet_pix.borrow().as_ref(),
         list_pngs(&assets.join("pets")),
         list_pngs(&assets.join("toys")),
         scales,
+        modes,
         control.clone(),
     );
 
@@ -170,11 +179,13 @@ fn build_ui(app: &Application) {
         let assets = assets.clone();
         let mut rest: i32 = 0; // ticks de repos restants après une prise
         let mut seen_version: u64 = 0;
+        let mut mode = cfg.mode.clone();
+        let mut wander = (total_w / 2.0, total_h / 2.0, 0.0_f64); // (x, y, compteur)
         glib::timeout_add_local(Duration::from_millis(100), move || {
             // Reload à chaud si le tray a changé un réglage.
-            let (version, skin, toyname, sc) = {
+            let (version, skin, toyname, sc, cur_mode) = {
                 let c = control.lock().unwrap();
-                (c.version, c.skin.clone(), c.toy.clone(), c.scale)
+                (c.version, c.skin.clone(), c.toy.clone(), c.scale, c.mode.clone())
             };
             if version != seen_version {
                 seen_version = version;
@@ -185,6 +196,13 @@ fn build_ui(app: &Application) {
                 pet.borrow_mut().set_sprite_size(size);
                 toy.borrow_mut().set_size(size);
                 scale.set(sc);
+                // La pelote n'existe qu'en mode « Pelote ».
+                if cur_mode == "Pelote" {
+                    toy.borrow_mut().spawn();
+                } else {
+                    toy.borrow_mut().hide();
+                }
+                mode = cur_mode;
             }
 
             let (twx, twy, twitch_active) = {
@@ -195,11 +213,25 @@ fn build_ui(app: &Application) {
                 let p = pet.borrow();
                 (p.x, p.y)
             };
+            let size = pet::TILE as f64 * scale.get();
+            let (max_x, max_y) = ((total_w - size).max(0.0), (total_h - size).max(0.0));
 
-            // Cible à poursuivre selon le mode.
+            // Cible à poursuivre. Twitch Heat est prioritaire dès qu'un clic arrive.
             let target = if twitch_active {
-                (twx, twy) // priorité aux clics Twitch Heat
+                (twx, twy)
+            } else if mode == "Sommeil" {
+                (px, py) // reste sur place → la pose « arrivée » joue le sommeil
+            } else if mode == "Autonome" {
+                // Errance : nouvelle cible aléatoire de temps en temps.
+                wander.2 -= 1.0;
+                if wander.2 < 0.0 {
+                    wander.0 = util::rand_unit() * max_x;
+                    wander.1 = util::rand_unit() * max_y;
+                    wander.2 = 80.0 + util::rand_unit() * 120.0;
+                }
+                (wander.0, wander.1)
             } else {
+                // Mode « Pelote ».
                 let mut t = toy.borrow_mut();
                 if t.active {
                     if t.update(px, py) {
@@ -208,9 +240,9 @@ fn build_ui(app: &Application) {
                     (t.x, t.y)
                 } else if rest > 0 {
                     rest -= 1;
-                    (px, py) // immobile : la pose « arrivée » joue le sommeil
+                    (px, py)
                 } else {
-                    t.spawn(); // nouvelle pelote
+                    t.spawn();
                     (t.x, t.y)
                 }
             };

@@ -14,6 +14,8 @@ pub struct Config {
     pub skin: String,
     pub toy: String,
     pub scale: f64,
+    /// Comportement : "Pelote", "Autonome" ou "Sommeil".
+    pub mode: String,
     pub twitch_channel: String,
 }
 
@@ -23,6 +25,7 @@ impl Default for Config {
             skin: "neko".into(),
             toy: "wool".into(),
             scale: 1.5,
+            mode: "Pelote".into(),
             twitch_channel: String::new(),
         }
     }
@@ -68,6 +71,7 @@ pub struct Control {
     pub skin: String,
     pub toy: String,
     pub scale: f64,
+    pub mode: String,
     pub twitch_channel: String,
     pub version: u64,
 }
@@ -78,6 +82,7 @@ impl Control {
             skin: c.skin.clone(),
             toy: c.toy.clone(),
             scale: c.scale,
+            mode: c.mode.clone(),
             twitch_channel: c.twitch_channel.clone(),
             version: 0,
         }
@@ -88,6 +93,7 @@ impl Control {
             skin: self.skin.clone(),
             toy: self.toy.clone(),
             scale: self.scale,
+            mode: self.mode.clone(),
             twitch_channel: self.twitch_channel.clone(),
         }
     }

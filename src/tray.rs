@@ -17,9 +17,11 @@ struct NekoTray {
     skins: Vec<String>,
     toys: Vec<String>,
     scales: Vec<f64>,
+    modes: Vec<String>,
     skin_idx: usize,
     toy_idx: usize,
     scale_idx: usize,
+    mode_idx: usize,
     control: Arc<Mutex<Control>>,
 }
 
@@ -30,6 +32,7 @@ impl NekoTray {
         c.skin = self.skins[self.skin_idx].clone();
         c.toy = self.toys[self.toy_idx].clone();
         c.scale = self.scales[self.scale_idx];
+        c.mode = self.modes[self.mode_idx].clone();
         c.version += 1;
         config::save(&c.to_config());
     }
@@ -69,6 +72,19 @@ impl Tray for NekoTray {
         };
 
         vec![
+            SubMenu {
+                label: "Mode".into(),
+                submenu: vec![radio(
+                    self.modes.clone(),
+                    self.mode_idx,
+                    Box::new(|t, i| {
+                        t.mode_idx = i;
+                        t.commit();
+                    }),
+                )],
+                ..Default::default()
+            }
+            .into(),
             SubMenu {
                 label: "Chat".into(),
                 submenu: vec![radio(
@@ -127,9 +143,10 @@ pub fn spawn(
     skins: Vec<String>,
     toys: Vec<String>,
     scales: Vec<f64>,
+    modes: Vec<String>,
     control: Arc<Mutex<Control>>,
 ) {
-    let (skin_idx, toy_idx, scale_idx) = {
+    let (skin_idx, toy_idx, scale_idx, mode_idx) = {
         let c = control.lock().unwrap();
         let skin_idx = skins.iter().position(|s| *s == c.skin).unwrap_or(0);
         let toy_idx = toys.iter().position(|t| *t == c.toy).unwrap_or(0);
@@ -137,7 +154,8 @@ pub fn spawn(
             .iter()
             .position(|s| (s - c.scale).abs() < 0.01)
             .unwrap_or(0);
-        (skin_idx, toy_idx, scale_idx)
+        let mode_idx = modes.iter().position(|m| *m == c.mode).unwrap_or(0);
+        (skin_idx, toy_idx, scale_idx, mode_idx)
     };
 
     let icon = sprite.map(icon_from_tile).into_iter().collect();
@@ -146,9 +164,11 @@ pub fn spawn(
         skins,
         toys,
         scales,
+        modes,
         skin_idx,
         toy_idx,
         scale_idx,
+        mode_idx,
         control,
     };
     ksni::TrayService::new(tray).spawn();
