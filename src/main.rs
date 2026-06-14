@@ -222,13 +222,13 @@ fn build_ui(app: &Application) {
                 #[cfg(target_os = "macos")]
                 {
                     use gdk4_macos::MacosSurface;
-                    use objc2::msg_send;
+                    use objc::{msg_send, sel, sel_impl};
                     
                     if let Some(surface) = w.surface() {
                         if let Ok(mac_surface) = surface.downcast::<MacosSurface>() {
                             let nswindow_ptr = mac_surface.native();
                             unsafe {
-                                let nswindow: *mut objc2::ffi::objc_object = nswindow_ptr as _;
+                                let nswindow: *mut objc::runtime::Object = nswindow_ptr as _;
                                 // setIgnoresMouseEvents:YES
                                 let _: () = msg_send![nswindow, setIgnoresMouseEvents: true];
                                 // setLevel:NSFloatingWindowLevel (3)
