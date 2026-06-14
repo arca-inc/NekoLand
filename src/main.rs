@@ -118,11 +118,25 @@ fn build_ui(app: &Application) {
 
     // ---- Fond de fenêtre transparent (sinon l'overlay masque tout) ----
     let provider = gtk::CssProvider::new();
-    provider.load_from_data("window.transparent-overlay, window.transparent-overlay.background, .transparent-overlay { background: transparent !important; background-color: transparent !important; }");
+    // `!important` est nécessaire : certains thèmes GTK posent un fond de fenêtre
+    // avec `!important`, qu'une règle normale ne peut pas battre (quelle que soit
+    // la priorité du provider). Comme le sélecteur est scopé à `.transparent-overlay`,
+    // le dashboard (classe `.dashboard`) n'est pas affecté et garde son fond plein.
+    // `background-image: none` neutralise les dégradés/motifs posés par le thème.
+    provider.load_from_data(
+        "window.transparent-overlay, \
+         window.transparent-overlay.background, \
+         window.transparent-overlay .background, \
+         .transparent-overlay { \
+            background: transparent !important; \
+            background-color: transparent !important; \
+            background-image: none !important; \
+         }",
+    );
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        gtk::STYLE_PROVIDER_PRIORITY_USER,
     );
 
     // ---- État partagé Twitch <-> GTK (coordonnées dans l'espace global) ----
