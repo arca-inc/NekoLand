@@ -9,6 +9,7 @@
 //!   - Réglages persistants (config.json) ; icône de barre système (ksni).
 
 mod config;
+mod dock;
 mod mapper;
 mod pet;
 mod toy;
@@ -38,6 +39,8 @@ const APP_ID: &str = "com.warmadon.neko_rust";
 const DEFAULT_SKIN: &str = "neko";
 /// Durée de repos du chat après avoir attrapé la pelote (ticks ~10/s).
 const REST_TICKS: i32 = 25;
+/// Focus continu d'une fenêtre au-delà duquel le chat passe en mode « dock ».
+const DOCK_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -168,6 +171,9 @@ fn build_ui(app: &Application) {
         areas.push(area);
     }
 
+    // ---- Suivi de la fenêtre active (mode dock) ----
+    let focus = dock::spawn();
+
     // ---- Tick d'animation ~10 fps (logique de jeu + redessine les overlays) ----
     {
         let app = app.clone();
@@ -179,6 +185,7 @@ fn build_ui(app: &Application) {
         let shared = shared.clone();
         let control = control.clone();
         let assets = assets.clone();
+        let focus = focus.clone();
         let mut rest: i32 = 0; // ticks de repos restants après une prise
         let mut seen_version: u64 = 0;
         let mut seen_open: u64 = 0;
@@ -242,14 +249,33 @@ fn build_ui(app: &Application) {
             } else if mode == "Sommeil" {
                 (px, py) // reste sur place → la pose « arrivée » joue le sommeil
             } else if mode == "Autonome" {
-                // Errance : nouvelle cible aléatoire de temps en temps.
-                wander.2 -= 1.0;
-                if wander.2 < 0.0 {
-                    wander.0 = util::rand_unit() * max_x;
-                    wander.1 = util::rand_unit() * max_y;
-                    wander.2 = 80.0 + util::rand_unit() * 120.0;
+                // Si une fenêtre est focus depuis assez longtemps → mode « dock » :
+                // le chat se promène sous son bord bas, sans monter ni descendre.
+                let docked = {
+                    let f = focus.lock().unwrap();
+                    (f.valid && f.since.elapsed() >= DOCK_DELAY).then(|| (f.x, f.y, f.w, f.h))
+                };
+                if let Some((wx, wy, ww, wh)) = docked {
+                    let dock_y = ((wy + wh) - orig_y as f64).clamp(0.0, max_y);
+                    let left = (wx - orig_x as f64).clamp(0.0, max_x);
+                    let right = (wx + ww - orig_x as f64 - size).clamp(left, max_x);
+                    pet.borrow_mut().y = dock_y; // bloque la hauteur
+                    wander.2 -= 1.0;
+                    if wander.2 < 0.0 || wander.0 < left || wander.0 > right {
+                        wander.0 = left + util::rand_unit() * (right - left).max(1.0);
+                        wander.2 = 60.0 + util::rand_unit() * 100.0;
+                    }
+                    (wander.0.clamp(left, right), dock_y)
+                } else {
+                    // Errance libre : nouvelle cible aléatoire de temps en temps.
+                    wander.2 -= 1.0;
+                    if wander.2 < 0.0 {
+                        wander.0 = util::rand_unit() * max_x;
+                        wander.1 = util::rand_unit() * max_y;
+                        wander.2 = 80.0 + util::rand_unit() * 120.0;
+                    }
+                    (wander.0, wander.1)
                 }
-                (wander.0, wander.1)
             } else {
                 // Mode « Pelote ».
                 let mut t = toy.borrow_mut();

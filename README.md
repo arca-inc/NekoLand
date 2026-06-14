@@ -14,7 +14,10 @@ Trois **modes** (commutables à chaud via le tray, persistés) :
   (< 24 px), elle se cache, le chat se repose (~2,5 s : alerte → toilette →
   fatigue → sommeil), puis une nouvelle pelote apparaît.
 - **Autonome** : le chat erre vers des cibles aléatoires et fait la sieste en
-  arrivant (le comportement « indépendant » de l'original).
+  arrivant (le comportement « indépendant » de l'original). **Sous-mode « dock »**
+  (Hyprland) : si une fenêtre reste focus > 1 min, le chat va se promener sous son
+  bord inférieur, horizontalement, sans monter ni descendre — il « pose » sur la
+  fenêtre. Dès que le focus change, il reprend son errance libre.
 - **Sommeil** : le chat reste sur place et dort.
 
 **Twitch Heat** est prioritaire dans tous les modes : si `twitch_channel` est
