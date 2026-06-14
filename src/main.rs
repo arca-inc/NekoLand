@@ -5,16 +5,17 @@
 //!     chat évolue dans un espace de coordonnées GLOBAL (union des moniteurs) ;
 //!     chaque overlay le dessine décalé de l'offset de son moniteur.
 //!     → contourne l'interdiction Wayland de repositionner sa propre fenêtre.
-//!   - Un thread tokio écoute Twitch Heat et pousse une cible dans un état partagé.
-//!   - Un tick GTK (~10 fps) fait avancer la logique du chat et redessine.
-//!   - Une icône de barre système (ksni) pour quitter.
+//!   - Le chat poursuit une pelote (toy) ; clics Twitch Heat prioritaires.
+//!   - Réglages persistants (config.json) ; icône de barre système (ksni).
 
+mod config;
 mod pet;
 mod toy;
 mod tray;
 mod twitch;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,12 +32,8 @@ use toy::Toy;
 use twitch::Target;
 
 const APP_ID: &str = "com.warmadon.neko_rust";
-/// Skin par défaut (fichiers `assets/pets/<skin>.png` et `<skin>.json`).
+/// Skin sans warning si son `.json` manque (il partage le mapping par défaut).
 const DEFAULT_SKIN: &str = "neko";
-/// Facteur d'agrandissement du sprite (32px natif → trop petit en hiDPI).
-const SCALE: f64 = 1.5;
-/// Sprite de la pelote (`assets/toys/<toy>.png`, 6 frames de 32×32).
-const TOY_PATH: &str = "assets/toys/wool.png";
 /// Durée de repos du chat après avoir attrapé la pelote (ticks ~10/s).
 const REST_TICKS: i32 = 25;
 
@@ -48,6 +45,8 @@ fn main() -> glib::ExitCode {
 
 fn build_ui(app: &Application) {
     let display = gtk::gdk::Display::default().expect("aucun display GDK");
+    let cfg = config::load();
+    let assets = assets_dir();
 
     // ---- Espace global = union de tous les moniteurs ----
     let monitors = monitors(&display);
@@ -69,25 +68,19 @@ fn build_ui(app: &Application) {
         active: false,
     }));
 
-    // ---- Skin : png + mapping JSON (var d'env NEKO_SKIN, défaut "neko") ----
-    let skin = std::env::var("NEKO_SKIN").unwrap_or_else(|_| DEFAULT_SKIN.to_string());
-    let sprite_path = format!("assets/pets/{skin}.png");
-    let sprites = load_mapping(&skin);
+    // ---- Ressources partagées (cellules → reload à chaud possible) ----
+    let scale = Rc::new(Cell::new(cfg.scale));
+    let sprite_size = pet::TILE as f64 * cfg.scale;
 
-    // ---- État du chat (thread GTK uniquement) ----
-    let sprite_size = pet::TILE as f64 * SCALE;
+    let sprites = load_mapping(&assets, &cfg.skin);
     let pet = Rc::new(RefCell::new(Pet::new(total_w, total_h, sprite_size, sprites)));
-    let pixbuf = load_sprite(&sprite_path);
-    if pixbuf.is_none() {
-        eprintln!("[neko] sprite introuvable : {sprite_path} (lance depuis le dossier du projet)");
-    }
+    let pet_pix = Rc::new(RefCell::new(load_sprite(&pets_png(&assets, &cfg.skin))));
 
-    // ---- Pelote à poursuivre ----
     let toy = Rc::new(RefCell::new(Toy::new(total_w, total_h, sprite_size)));
-    let toy_pixbuf = load_sprite(TOY_PATH);
+    let toy_pix = Rc::new(RefCell::new(load_sprite(&toys_png(&assets, &cfg.toy))));
 
     // ---- Tray icon ----
-    tray::spawn(pixbuf.as_ref());
+    tray::spawn(pet_pix.borrow().as_ref());
 
     // ---- Un overlay layer-shell par moniteur ----
     let mut areas = Vec::with_capacity(monitors.len());
@@ -111,24 +104,25 @@ fn build_ui(app: &Application) {
         area.set_vexpand(true);
         {
             let pet = pet.clone();
-            let pixbuf = pixbuf.clone();
+            let pet_pix = pet_pix.clone();
             let toy = toy.clone();
-            let toy_pixbuf = toy_pixbuf.clone();
+            let toy_pix = toy_pix.clone();
+            let scale = scale.clone();
             area.set_draw_func(move |_a, cr, _w, _h| {
+                let sc = scale.get();
                 // Helper : blit d'une tuile 32×32 à une position globale.
                 let blit = |pb: &Pixbuf, fx: i32, fy: i32, gx: f64, gy: f64| {
                     let sub = pb.new_subpixbuf(fx, fy, pet::TILE, pet::TILE);
                     let _ = cr.save();
-                    // position globale → coordonnées locales de ce moniteur
-                    cr.translate(gx - off_x, gy - off_y);
-                    cr.scale(SCALE, SCALE);
+                    cr.translate(gx - off_x, gy - off_y); // global → local moniteur
+                    cr.scale(sc, sc);
                     cr.set_source_pixbuf(&sub, 0.0, 0.0);
                     let _ = cr.paint();
                     let _ = cr.restore();
                 };
 
                 // Pelote (sous le chat).
-                if let Some(tp) = &toy_pixbuf {
+                if let Some(tp) = toy_pix.borrow().as_ref() {
                     let t = toy.borrow();
                     if t.active {
                         let (fx, fy) = t.current_frame();
@@ -136,7 +130,7 @@ fn build_ui(app: &Application) {
                     }
                 }
                 // Chat.
-                if let Some(pb) = &pixbuf {
+                if let Some(pb) = pet_pix.borrow().as_ref() {
                     let p = pet.borrow();
                     let (fx, fy) = p.current_frame();
                     blit(pb, fx, fy, p.x, p.y);
@@ -174,8 +168,7 @@ fn build_ui(app: &Application) {
 
             // Cible à poursuivre selon le mode.
             let target = if twitch_active {
-                // Priorité aux clics Twitch Heat.
-                (twx, twy)
+                (twx, twy) // priorité aux clics Twitch Heat
             } else {
                 let mut t = toy.borrow_mut();
                 if t.active {
@@ -200,42 +193,75 @@ fn build_ui(app: &Application) {
         });
     }
 
-    // ---- Thread Twitch Heat (optionnel : variable d'env NEKO_TWITCH_CHANNEL) ----
-    if let Ok(channel) = std::env::var("NEKO_TWITCH_CHANNEL") {
-        if !channel.is_empty() {
-            let shared = shared.clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
-                rt.block_on(twitch::run(channel, shared, total_w, total_h));
-            });
-        }
+    // ---- Thread Twitch Heat (si un canal est configuré) ----
+    if !cfg.twitch_channel.is_empty() {
+        let shared = shared.clone();
+        let channel = cfg.twitch_channel.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
+            rt.block_on(twitch::run(channel, shared, total_w, total_h));
+        });
     }
 }
 
-/// Charge le mapping d'un skin depuis `assets/pets/<skin>.json`. Retombe sur le
+/// Répertoire des assets : `$NEKO_ASSETS`, sinon `./assets`, à côté de l'exécutable,
+/// `target/<profil>/../../assets` (dev cargo), `~/.local/share/...`, ou `/usr/share`.
+fn assets_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("NEKO_ASSETS") {
+        return PathBuf::from(d);
+    }
+    let mut candidates: Vec<PathBuf> = vec![PathBuf::from("assets")];
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("assets"));
+            if let Some(up) = dir.parent().and_then(Path::parent) {
+                candidates.push(up.join("assets")); // cargo: target/<profil>/exe → ../../assets
+            }
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(PathBuf::from(home).join(".local/share/neko-desktop/assets"));
+    }
+    candidates.push(PathBuf::from("/usr/share/neko-desktop/assets"));
+    candidates
+        .into_iter()
+        .find(|p| p.is_dir())
+        .unwrap_or_else(|| PathBuf::from("assets"))
+}
+
+fn pets_png(assets: &Path, skin: &str) -> PathBuf {
+    assets.join("pets").join(format!("{skin}.png"))
+}
+fn toys_png(assets: &Path, toy: &str) -> PathBuf {
+    assets.join("toys").join(format!("{toy}.png"))
+}
+
+/// Charge le mapping d'un skin depuis `<assets>/pets/<skin>.json`. Retombe sur le
 /// mapping neko embarqué si le fichier est absent ou invalide.
-fn load_mapping(skin: &str) -> Sprites {
-    let path = format!("assets/pets/{skin}.json");
+fn load_mapping(assets: &Path, skin: &str) -> Sprites {
+    let path = assets.join("pets").join(format!("{skin}.json"));
     match std::fs::read_to_string(&path) {
         Ok(json) => match Sprites::from_json(&json) {
             Ok(s) => return s,
-            Err(e) => eprintln!("[neko] {path} invalide ({e}), mapping par défaut utilisé"),
+            Err(e) => eprintln!("[neko] {} invalide ({e}), mapping par défaut", path.display()),
         },
         Err(_) => {
             if skin != DEFAULT_SKIN {
-                eprintln!("[neko] {path} introuvable, mapping par défaut utilisé");
+                eprintln!("[neko] {} introuvable, mapping par défaut", path.display());
             }
         }
     }
     Sprites::default()
 }
 
-/// Charge le sprite-sheet et rend transparente la couleur de fond, définie comme
-/// celle du pixel (0,0) (les sheets oneko ont un fond plein uni à retirer).
-fn load_sprite(path: &str) -> Option<Pixbuf> {
-    let pixbuf = Pixbuf::from_file(path).ok()?;
+/// Charge un sprite-sheet et rend transparente la couleur de fond — définie comme
+/// celle du pixel (0,0) — **uniquement si ce pixel est opaque** (sinon le sheet a
+/// déjà son propre alpha et on n'y touche pas).
+fn load_sprite(path: &Path) -> Option<Pixbuf> {
+    let pixbuf = Pixbuf::from_file(path)
+        .map_err(|_| eprintln!("[neko] sprite introuvable : {}", path.display()))
+        .ok()?;
     let nch = pixbuf.n_channels() as usize;
-    // Lecture du pixel (0,0) : 1ers octets du buffer (RGB ou RGBA).
     let (r, g, b, a) = {
         let pixels = unsafe { pixbuf.pixels() };
         if pixels.len() < 3 {
@@ -244,12 +270,9 @@ fn load_sprite(path: &str) -> Option<Pixbuf> {
         let a = if nch >= 4 { pixels[3] } else { 255 };
         (pixels[0], pixels[1], pixels[2], a)
     };
-    // Si le pixel (0,0) est déjà transparent, le sheet a son propre alpha : on n'y
-    // touche pas (sinon on retirerait par erreur une vraie couleur, ex. le noir).
     if a < 255 {
         return Some(pixbuf);
     }
-    // Sinon (fond plein opaque), on rend cette couleur transparente.
     pixbuf.add_alpha(true, r, g, b).ok()
 }
 
