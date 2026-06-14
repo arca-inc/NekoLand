@@ -226,7 +226,7 @@ fn build_ui(app: &Application) {
                     
                     if let Some(surface) = w.surface() {
                         if let Ok(mac_surface) = surface.downcast::<MacosSurface>() {
-                            let nswindow_ptr = mac_surface.nswindow();
+                            let nswindow_ptr = mac_surface.native_window();
                             unsafe {
                                 let nswindow: *mut objc2::ffi::objc_object = nswindow_ptr as _;
                                 // setIgnoresMouseEvents:YES
