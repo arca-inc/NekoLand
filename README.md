@@ -1,8 +1,18 @@
 # neko_rust
 
-Neko desktop natif, en Rust. Un chat animé se balade sur le bureau et chasse
-soit une cible aléatoire (mode autonome), soit les clics des viewers Twitch
-(via **Heat**).
+Neko desktop natif, en Rust. Un chat animé poursuit une **pelote de laine** qui
+rebondit sur le bureau ; quand il l'attrape, il se repose puis une nouvelle
+pelote réapparaît. En présence d'un canal **Twitch Heat**, il chasse en priorité
+les clics des viewers sur le stream.
+
+## Comportement (gameplay)
+
+- **Pelote** (`src/toy.rs`) : rebondit en diagonale sur les bords de la zone
+  globale (union des moniteurs). Le chat la poursuit, l'attrape par collision
+  (< 24 px), elle se cache, le chat se repose (~2,5 s : alerte → toilette →
+  fatigue → sommeil), puis une nouvelle pelote apparaît.
+- **Twitch Heat** : si `NEKO_TWITCH_CHANNEL` est défini et qu'un clic arrive, le
+  chat chasse cette cible au lieu de la pelote.
 
 ## Pourquoi cette stack
 

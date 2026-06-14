@@ -66,14 +66,11 @@ impl Default for Sprites {
     }
 }
 
-/// État de comportement.
+/// État de comportement. La cible (pelote, clic Twitch, ou sa propre position
+/// pour se reposer) est décidée par l'appelant ; ici on ne fait que la chasser.
 pub enum State {
-    /// Chasse une cible (curseur ou coordonnées Twitch Heat).
+    /// Chasse une cible.
     Chase,
-    /// Errance autonome : nouvelle cible aléatoire de temps en temps.
-    Autonom,
-    #[allow(dead_code)]
-    Sleep,
 }
 
 pub struct Pet {
@@ -83,9 +80,6 @@ pub struct Pet {
     bounds_h: f64,
     /// Taille du sprite à l'écran en px (pour que le chat entier reste visible).
     sprite: f64,
-    move_counter: f64,
-    random_x: f64,
-    random_y: f64,
     sleep_counter: i32,
     loop_counter: usize,
     current: &'static str,
@@ -100,9 +94,6 @@ impl Pet {
             bounds_w,
             bounds_h,
             sprite,
-            move_counter: 100.0 + rand_unit() * 100.0,
-            random_x: bounds_w / 2.0,
-            random_y: bounds_h / 2.0,
             sleep_counter: 0,
             loop_counter: 0,
             current: IDLE,
@@ -130,16 +121,6 @@ impl Pet {
     pub fn update(&mut self, target: (f64, f64), state: State) {
         match state {
             State::Chase => self.move_toward(target.0, target.1),
-            State::Autonom => {
-                self.move_counter -= 1.0;
-                if self.move_counter < 100.0 {
-                    self.random_x = rand_unit() * self.max_x();
-                    self.random_y = rand_unit() * self.max_y();
-                    self.move_counter = 100.0 + rand_unit() * 100.0;
-                }
-                self.move_toward(self.random_x, self.random_y);
-            }
-            State::Sleep => {}
         }
 
         let len = self.sprites.frames(self.current).len().max(1);
@@ -194,22 +175,4 @@ impl Pet {
             };
         }
     }
-}
-
-/// Petit PRNG sans dépendance (xorshift sur l'horloge) — suffisant pour
-/// des positions « aléatoires » d'errance.
-fn rand_unit() -> f64 {
-    use std::cell::Cell;
-    use std::time::{SystemTime, UNIX_EPOCH};
-    thread_local!(static SEED: Cell<u64> = Cell::new(
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0x2545F4914F6CDD1D) | 1
-    ));
-    SEED.with(|s| {
-        let mut x = s.get();
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        s.set(x);
-        (x >> 11) as f64 / (1u64 << 53) as f64
-    })
 }

@@ -10,6 +10,7 @@
 //!   - Une icône de barre système (ksni) pour quitter.
 
 mod pet;
+mod toy;
 mod tray;
 mod twitch;
 
@@ -26,6 +27,7 @@ use gtk::{Application, ApplicationWindow, DrawingArea};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use pet::{Pet, Sprites, State};
+use toy::Toy;
 use twitch::Target;
 
 const APP_ID: &str = "com.warmadon.neko_rust";
@@ -33,6 +35,10 @@ const APP_ID: &str = "com.warmadon.neko_rust";
 const DEFAULT_SKIN: &str = "neko";
 /// Facteur d'agrandissement du sprite (32px natif → trop petit en hiDPI).
 const SCALE: f64 = 1.5;
+/// Sprite de la pelote (`assets/toys/<toy>.png`, 6 frames de 32×32).
+const TOY_PATH: &str = "assets/toys/wool.png";
+/// Durée de repos du chat après avoir attrapé la pelote (ticks ~10/s).
+const REST_TICKS: i32 = 25;
 
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -76,6 +82,10 @@ fn build_ui(app: &Application) {
         eprintln!("[neko] sprite introuvable : {sprite_path} (lance depuis le dossier du projet)");
     }
 
+    // ---- Pelote à poursuivre ----
+    let toy = Rc::new(RefCell::new(Toy::new(total_w, total_h, sprite_size)));
+    let toy_pixbuf = load_sprite(TOY_PATH);
+
     // ---- Tray icon ----
     tray::spawn(pixbuf.as_ref());
 
@@ -102,18 +112,35 @@ fn build_ui(app: &Application) {
         {
             let pet = pet.clone();
             let pixbuf = pixbuf.clone();
+            let toy = toy.clone();
+            let toy_pixbuf = toy_pixbuf.clone();
             area.set_draw_func(move |_a, cr, _w, _h| {
-                let Some(pb) = &pixbuf else { return };
-                let p = pet.borrow();
-                let (fx, fy) = p.current_frame();
-                let sub = pb.new_subpixbuf(fx, fy, pet::TILE, pet::TILE);
-                let _ = cr.save();
-                // position globale du chat → coordonnées locales de ce moniteur
-                cr.translate(p.x - off_x, p.y - off_y);
-                cr.scale(SCALE, SCALE);
-                cr.set_source_pixbuf(&sub, 0.0, 0.0);
-                let _ = cr.paint();
-                let _ = cr.restore();
+                // Helper : blit d'une tuile 32×32 à une position globale.
+                let blit = |pb: &Pixbuf, fx: i32, fy: i32, gx: f64, gy: f64| {
+                    let sub = pb.new_subpixbuf(fx, fy, pet::TILE, pet::TILE);
+                    let _ = cr.save();
+                    // position globale → coordonnées locales de ce moniteur
+                    cr.translate(gx - off_x, gy - off_y);
+                    cr.scale(SCALE, SCALE);
+                    cr.set_source_pixbuf(&sub, 0.0, 0.0);
+                    let _ = cr.paint();
+                    let _ = cr.restore();
+                };
+
+                // Pelote (sous le chat).
+                if let Some(tp) = &toy_pixbuf {
+                    let t = toy.borrow();
+                    if t.active {
+                        let (fx, fy) = t.current_frame();
+                        blit(tp, fx, fy, t.x, t.y);
+                    }
+                }
+                // Chat.
+                if let Some(pb) = &pixbuf {
+                    let p = pet.borrow();
+                    let (fx, fy) = p.current_frame();
+                    blit(pb, fx, fy, p.x, p.y);
+                }
             });
         }
         window.set_child(Some(&area));
@@ -129,17 +156,43 @@ fn build_ui(app: &Application) {
         areas.push(area);
     }
 
-    // ---- Tick d'animation ~10 fps (redessine tous les overlays) ----
+    // ---- Tick d'animation ~10 fps (logique de jeu + redessine les overlays) ----
     {
         let pet = pet.clone();
+        let toy = toy.clone();
         let shared = shared.clone();
+        let mut rest: i32 = 0; // ticks de repos restants après une prise
         glib::timeout_add_local(Duration::from_millis(100), move || {
-            let (tx, ty, active) = {
+            let (twx, twy, twitch_active) = {
                 let t = shared.lock().unwrap();
                 (t.x, t.y, t.active)
             };
-            let state = if active { State::Chase } else { State::Autonom };
-            pet.borrow_mut().update((tx, ty), state);
+            let (px, py) = {
+                let p = pet.borrow();
+                (p.x, p.y)
+            };
+
+            // Cible à poursuivre selon le mode.
+            let target = if twitch_active {
+                // Priorité aux clics Twitch Heat.
+                (twx, twy)
+            } else {
+                let mut t = toy.borrow_mut();
+                if t.active {
+                    if t.update(px, py) {
+                        rest = REST_TICKS; // attrapée → le chat se repose
+                    }
+                    (t.x, t.y)
+                } else if rest > 0 {
+                    rest -= 1;
+                    (px, py) // immobile : la pose « arrivée » joue le sommeil
+                } else {
+                    t.spawn(); // nouvelle pelote
+                    (t.x, t.y)
+                }
+            };
+
+            pet.borrow_mut().update(target, State::Chase);
             for area in &areas {
                 area.queue_draw();
             }
@@ -181,16 +234,22 @@ fn load_mapping(skin: &str) -> Sprites {
 /// celle du pixel (0,0) (les sheets oneko ont un fond plein uni à retirer).
 fn load_sprite(path: &str) -> Option<Pixbuf> {
     let pixbuf = Pixbuf::from_file(path).ok()?;
+    let nch = pixbuf.n_channels() as usize;
     // Lecture du pixel (0,0) : 1ers octets du buffer (RGB ou RGBA).
-    let (r, g, b) = {
+    let (r, g, b, a) = {
         let pixels = unsafe { pixbuf.pixels() };
         if pixels.len() < 3 {
             return Some(pixbuf);
         }
-        (pixels[0], pixels[1], pixels[2])
+        let a = if nch >= 4 { pixels[3] } else { 255 };
+        (pixels[0], pixels[1], pixels[2], a)
     };
-    // add_alpha renvoie un nouveau pixbuf RGBA où chaque pixel == (r,g,b) devient
-    // totalement transparent.
+    // Si le pixel (0,0) est déjà transparent, le sheet a son propre alpha : on n'y
+    // touche pas (sinon on retirerait par erreur une vraie couleur, ex. le noir).
+    if a < 255 {
+        return Some(pixbuf);
+    }
+    // Sinon (fond plein opaque), on rend cette couleur transparente.
     pixbuf.add_alpha(true, r, g, b).ok()
 }
 
