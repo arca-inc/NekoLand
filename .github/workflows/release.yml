@@ -149,7 +149,7 @@ jobs:
             arch -x86_64 /bin/bash -c \
               "NONINTERACTIVE=1 $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           fi
-          arch -x86_64 /usr/local/bin/brew install gtk4 pkgconf
+          arch -x86_64 /usr/local/bin/brew install gtk4 pkgconf libffi
 
       - name: Build arm64
         id: build
@@ -157,12 +157,19 @@ jobs:
 
       - name: Build x86_64
         run: |
-          # pkg-config isolé sur le préfixe x86_64 (/usr/local) pour ne JAMAIS
-          # piocher une lib arm64 (/opt/homebrew) en cross-compilation. On liste
-          # TOUS les dossiers pkgconfig de /usr/local (y compris Cellar/* où vivent
-          # les .pc des formules keg-only comme libffi, que le glob opt/* ratait).
-          XPC="$(find /usr/local -type d -name pkgconfig 2>/dev/null | tr '\n' ':')"
-          PKG_CONFIG_LIBDIR="$XPC" PKG_CONFIG_ALLOW_CROSS=1 \
+          # Diagnostic : où est libffi.pc dans le préfixe x86_64 ?
+          echo "=== libffi keg ==="
+          arch -x86_64 /usr/local/bin/brew list --versions libffi || echo "libffi NON installé"
+          echo "=== libffi.pc trouvés ==="
+          find -L /usr/local -name 'libffi.pc' 2>/dev/null || true
+          echo "=== prefix libffi ==="
+          arch -x86_64 /usr/local/bin/brew --prefix libffi 2>/dev/null || true
+          # pkg-config isolé sur le préfixe x86_64 (/usr/local) pour ne JAMAIS piocher
+          # une lib arm64 (/opt/homebrew). `find -L` suit les symlinks opt/* → Cellar.
+          XPC="$(find -L /usr/local -type d -name pkgconfig 2>/dev/null | tr '\n' ':')"
+          LF="$(arch -x86_64 /usr/local/bin/brew --prefix libffi 2>/dev/null)/lib/pkgconfig"
+          echo "PKG_CONFIG_LIBDIR=$XPC:$LF"
+          PKG_CONFIG_LIBDIR="$XPC:$LF" PKG_CONFIG_ALLOW_CROSS=1 \
             cargo build --release --target x86_64-apple-darwin
 
       - name: Create universal bundle
