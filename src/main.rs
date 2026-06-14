@@ -14,6 +14,7 @@ pub mod i18n;
 pub mod mapper;
 pub mod pet;
 pub mod toy;
+#[cfg(target_os = "linux")]
 mod tray;
 mod twitch;
 mod util;
@@ -154,6 +155,7 @@ fn build_ui(app: &Application) {
         .iter()
         .map(|s| s.to_string())
         .collect();
+    #[cfg(target_os = "linux")]
     tray::spawn(
         pet_pix.borrow().as_ref(),
         list_pngs(&assets.join("pets")),
