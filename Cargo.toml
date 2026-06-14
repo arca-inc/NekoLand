@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 # GTK4 + layer-shell : l'overlay Wayland always-on-top, click-through
 gtk = { version = "0.9", package = "gtk4", features = ["v4_10"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 gtk4-layer-shell = "0.4"
 
 # Twitch Heat : WebSocket asynchrone

@@ -29,6 +29,7 @@ use gtk::gdk_pixbuf::Pixbuf;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, DrawingArea};
+#[cfg(target_os = "linux")]
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use pet::{Pet, Sprites, State};
@@ -170,14 +171,25 @@ fn build_ui(app: &Application) {
         let off_y = (geo.y() - orig_y) as f64;
 
         let window = ApplicationWindow::builder().application(app).build();
-        window.init_layer_shell();
-        window.set_layer(Layer::Overlay);
-        window.set_monitor(monitor);
-        for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-            window.set_anchor(edge, true);
+        #[cfg(target_os = "linux")]
+        {
+            window.init_layer_shell();
+            window.set_layer(Layer::Overlay);
+            window.set_monitor(monitor);
+            for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
+                window.set_anchor(edge, true);
+            }
+            window.set_exclusive_zone(-1);
+            window.set_keyboard_mode(KeyboardMode::None);
         }
-        window.set_exclusive_zone(-1);
-        window.set_keyboard_mode(KeyboardMode::None);
+        #[cfg(not(target_os = "linux"))]
+        {
+            window.set_decorated(false);
+            let geo = monitor.geometry();
+            window.set_default_size(geo.width(), geo.height());
+            // Position it manually (in GTK4 you might not be able to set absolute position directly via API,
+            // but setting no-decorate and transparent background is a start).
+        }
 
         let area = DrawingArea::new();
         area.set_hexpand(true);
