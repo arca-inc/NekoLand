@@ -123,6 +123,13 @@ jobs:
   build-macos:
     name: Build macOS (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    # Garde-fou : le runner Intel (macos-13) peut traîner sur brew gtk4 ; on borne
+    # plutôt que de laisser le job pendre indéfiniment.
+    timeout-minutes: 40
+    env:
+      # Évite l'auto-update lent de Homebrew avant chaque install.
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
     strategy:
       fail-fast: false
       matrix:
