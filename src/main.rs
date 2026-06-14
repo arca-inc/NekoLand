@@ -187,8 +187,54 @@ fn build_ui(app: &Application) {
             window.set_decorated(false);
             let geo = monitor.geometry();
             window.set_default_size(geo.width(), geo.height());
-            // Position it manually (in GTK4 you might not be able to set absolute position directly via API,
-            // but setting no-decorate and transparent background is a start).
+            
+            // On connect_realize, the window gets its GdkSurface.
+            // We can then extract the native handle (HWND or NSWindow) and apply
+            // the "always on top" and "pass-through" styles.
+            window.connect_realize(|w| {
+                #[cfg(target_os = "windows")]
+                {
+                    use gdk4_win32::Win32Surface;
+                    use windows_sys::Win32::Foundation::HWND;
+                    use windows_sys::Win32::UI::WindowsAndMessaging::{
+                        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
+                        GWL_EXSTYLE, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+                        WS_EX_LAYERED, WS_EX_TRANSPARENT,
+                    };
+                    
+                    if let Some(surface) = w.surface() {
+                        if let Ok(win32_surface) = surface.downcast::<Win32Surface>() {
+                            let hwnd = win32_surface.handle() as HWND;
+                            unsafe {
+                                let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize);
+                                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                            }
+                        }
+                    }
+                }
+                
+                #[cfg(target_os = "macos")]
+                {
+                    use gdk4_macos::MacOSSurface;
+                    use objc2::{msg_send, ClassType};
+                    use objc2::rc::Id;
+                    use objc2_app_kit::NSWindow;
+                    
+                    if let Some(surface) = w.surface() {
+                        if let Ok(mac_surface) = surface.downcast::<MacOSSurface>() {
+                            let nswindow_ptr = mac_surface.nswindow();
+                            unsafe {
+                                let nswindow: *mut objc2::ffi::objc_object = nswindow_ptr as _;
+                                // setIgnoresMouseEvents:YES
+                                let _: () = msg_send![nswindow, setIgnoresMouseEvents: true];
+                                // setLevel:NSFloatingWindowLevel (3)
+                                let _: () = msg_send![nswindow, setLevel: 3isize];
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         let area = DrawingArea::new();
