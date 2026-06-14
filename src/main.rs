@@ -209,7 +209,7 @@ fn build_ui(app: &Application) {
                     
                     if let Some(surface) = w.surface() {
                         if let Ok(win32_surface) = surface.downcast::<Win32Surface>() {
-                            let hwnd = win32_surface.handle() as HWND;
+                            let hwnd = win32_surface.handle().0 as HWND;
                             unsafe {
                                 let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
                                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize);
@@ -226,7 +226,7 @@ fn build_ui(app: &Application) {
                     
                     if let Some(surface) = w.surface() {
                         if let Ok(mac_surface) = surface.downcast::<MacosSurface>() {
-                            let nswindow_ptr = mac_surface.native_window();
+                            let nswindow_ptr = mac_surface.native();
                             unsafe {
                                 let nswindow: *mut objc2::ffi::objc_object = nswindow_ptr as _;
                                 // setIgnoresMouseEvents:YES
