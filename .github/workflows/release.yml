@@ -120,52 +120,65 @@ jobs:
           name: nekoland-windows
           path: nekoland-windows.zip
 
+  # Tout est construit sur le runner Apple Silicon (macos-14, abondant) — on ne
+  # dépend plus du runner Intel macos-13 rare/en file d'attente. On compile les
+  # DEUX cibles puis on fusionne (lipo) en un binaire universel x86_64+arm64.
   build-macos:
-    name: Build macOS (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    # Garde-fou : le runner Intel (macos-13) peut traîner sur brew gtk4 ; on borne
-    # plutôt que de laisser le job pendre indéfiniment.
-    timeout-minutes: 40
+    name: Build macOS (universal)
+    runs-on: macos-14
+    timeout-minutes: 60
     env:
-      # Évite l'auto-update lent de Homebrew avant chaque install.
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-13   # runner Intel  → binaire x86_64
-            arch: x86_64
-          - runner: macos-14   # runner Apple Silicon → binaire arm64
-            arch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install Rust (both Apple targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install GTK4 (arm64, Homebrew natif)
         run: brew install gtk4 pkgconfig
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install GTK4 (x86_64, Homebrew sous Rosetta)
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          if [ ! -x /usr/local/bin/brew ]; then
+            arch -x86_64 /bin/bash -c \
+              "NONINTERACTIVE=1 $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          arch -x86_64 /usr/local/bin/brew install gtk4 pkgconf
 
-      - name: Build
+      - name: Build arm64
         id: build
-        run: cargo build --release
+        run: cargo build --release --target aarch64-apple-darwin
 
-      - name: Create Bundle
-        if: steps.build.outcome == 'success'
+      - name: Build x86_64
+        run: |
+          # pkg-config isolé sur le préfixe x86_64 (/usr/local) — y compris les
+          # formules keg-only (.pc sous opt/*/lib/pkgconfig) — pour ne JAMAIS
+          # piocher une lib arm64 (/opt/homebrew) en cross-compilation.
+          XPC="$(ls -d /usr/local/opt/*/lib/pkgconfig 2>/dev/null | tr '\n' ':')/usr/local/lib/pkgconfig"
+          PKG_CONFIG_LIBDIR="$XPC" PKG_CONFIG_ALLOW_CROSS=1 \
+            cargo build --release --target x86_64-apple-darwin
+
+      - name: Create universal bundle
         run: |
           mkdir -p bundle-macos/assets
           cp -r assets/* bundle-macos/assets/
-          cp target/release/nekoland bundle-macos/
-          tar -czvf nekoland-macos-${{ matrix.arch }}.tar.gz -C bundle-macos .
+          lipo -create -output bundle-macos/nekoland \
+            target/aarch64-apple-darwin/release/nekoland \
+            target/x86_64-apple-darwin/release/nekoland
+          lipo -info bundle-macos/nekoland
+          tar -czvf nekoland-macos-universal.tar.gz -C bundle-macos .
 
       - name: Upload Artifact
-        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: nekoland-macos-${{ matrix.arch }}
-          path: nekoland-macos-${{ matrix.arch }}.tar.gz
+          name: nekoland-macos-universal
+          path: nekoland-macos-universal.tar.gz
 
   create_release:
     name: Create GitHub Release
