@@ -1,0 +1,20 @@
+[package]
+name = "neko_rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# GTK4 + layer-shell : l'overlay Wayland always-on-top, click-through
+gtk = { version = "0.9", package = "gtk4", features = ["v4_10"] }
+gtk4-layer-shell = "0.4"
+
+# Twitch Heat : WebSocket asynchrone
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Tray icon (StatusNotifierItem) — thread dbus autonome, pas besoin de tokio
+ksni = "0.2"

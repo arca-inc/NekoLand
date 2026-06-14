@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Neko Sprite Mapper</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background:#1e1e1e; color:#eee; display:flex; gap:16px; padding:16px; }
+  h1 { font-size:18px; margin:0 0 8px; }
+  .col { flex:1; min-width:0; }
+  #gridWrap { display:grid; grid-template-columns:repeat(8, max-content); gap:6px; }
+  .cell { position:relative; cursor:pointer; border:2px solid #333; background:#111; image-rendering:pixelated; }
+  .cell:hover { border-color:#5af; }
+  .cell .lbl { position:absolute; top:0; left:0; font-size:9px; background:#000a; padding:0 2px; color:#ff0; }
+  .cell .badges { position:absolute; bottom:0; right:0; font-size:9px; background:#06c; color:#fff; padding:0 2px; max-width:100%; }
+  .states { display:flex; flex-direction:column; gap:4px; max-height:78vh; overflow:auto; }
+  .state { border:1px solid #444; border-radius:4px; padding:6px; }
+  .state.active { border-color:#5af; background:#0a1a2a; }
+  .state .hdr { display:flex; justify-content:space-between; align-items:center; cursor:pointer; gap:8px; }
+  .state .name { font-weight:bold; }
+  .state .frames { display:flex; gap:4px; flex-wrap:wrap; margin-top:4px; }
+  .frames canvas { border:1px solid #555; image-rendering:pixelated; }
+  .frames .empty { font-size:11px; color:#777; }
+  button, select, input[type=text] { background:#2a2a2a; color:#eee; border:1px solid #555; border-radius:4px; padding:3px 8px; font-size:12px; }
+  button { cursor:pointer; }
+  button:hover, select:hover { border-color:#5af; }
+  textarea { width:100%; height:200px; background:#111; color:#9f9; border:1px solid #444; font-family:monospace; font-size:12px; }
+  .hint { font-size:12px; color:#aaa; line-height:1.5; }
+  .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  .ok { color:#7f7; }
+</style>
+</head>
+<body>
+
+<div class="col" style="flex:0 0 auto;">
+  <h1>🐱 Skin & sheet</h1>
+  <div class="toolbar">
+    <label>Skin :
+      <select id="skin"></select>
+    </label>
+    <label class="hint">ou fichier local : <input type="file" id="file" accept="image/png"></label>
+  </div>
+  <div class="toolbar">
+    <label class="hint">zoom <input type="range" id="zoom" min="2" max="8" value="4"></label>
+    <span id="status" class="hint"></span>
+  </div>
+  <p class="hint">1. Choisis une anim à droite (devient bleue). 2. Clique les cellules <b>dans l'ordre des frames</b>. Re-cliquer une case prise la retire.</p>
+  <div id="gridWrap"></div>
+</div>
+
+<div class="col">
+  <h1>🎬 Animations</h1>
+  <div class="toolbar">
+    <button id="prefill">↺ Mapping par défaut</button>
+    <button id="clearActive">Vider l'anim active</button>
+    <button id="clearAll">Tout vider</button>
+  </div>
+  <div class="states" id="states"></div>
+</div>
+
+<div class="col">
+  <h1>📋 Config du skin</h1>
+  <p class="hint">Format <code>[colonne, ligne]</code> par frame.<br>
+     À placer dans <code>assets/pets/&lt;skin&gt;.json</code>.</p>
+  <div class="toolbar">
+    <button id="download">⬇ Télécharger <span id="dlname">neko</span>.json</button>
+    <label class="hint">éditer un .json : <input type="file" id="loadjson" accept=".json,application/json"></label>
+  </div>
+  <button id="copy">Copier le JSON</button>
+  <textarea id="out" readonly></textarea>
+</div>
+
+<script>
+const CELL = 32, SEP = 1, COLS = 8, ROWS = 6;
+const SHEET_URL = "https://bomvel.neocities.org/neko/sheets/"; // source des skins
+
+// Animations attendues par le moteur.
+const STATES = [
+  ["idle","assis immobile (face)"], ["alert","surpris / alerte"],
+  ["tired","fatigué / bâillement"], ["sleeping","dort (Zz)"],
+  ["scratchSelf","se gratte lui-même"],
+  ["scratchWallN","gratte mur HAUT"], ["scratchWallS","gratte mur BAS"],
+  ["scratchWallW","gratte mur GAUCHE"], ["scratchWallE","gratte mur DROITE"],
+  ["N","court HAUT"], ["NE","court HAUT-DROITE"], ["E","court DROITE"],
+  ["SE","court BAS-DROITE"], ["S","court BAS"], ["SW","court BAS-GAUCHE"],
+  ["W","court GAUCHE"], ["NW","court HAUT-GAUCHE"],
+];
+
+// Mapping neko par défaut (celui fourni). Pré-rempli pour chaque skin.
+const DEFAULT = {
+  idle:[[0,0]], alert:[[7,0]], tired:[[4,0]], sleeping:[[5,0],[6,0]],
+  scratchSelf:[[1,0],[2,0],[3,0]],
+  scratchWallN:[[4,3],[5,3]], scratchWallS:[[0,3],[1,3]],
+  scratchWallW:[[6,3],[7,3]], scratchWallE:[[2,3],[3,3]],
+  N:[[0,2],[1,2]], NE:[[6,1],[7,1]], E:[[4,1],[5,1]], SE:[[2,1],[3,1]],
+  S:[[0,1],[1,1]], SW:[[6,2],[7,2]], W:[[5,2],[4,2]], NW:[[2,2],[3,2]],
+};
+
+// Liste des skins de l'archive.
+const SKINS = ["neko","tabby","dog","ace","air","black","black2","blue","blue-tabby",
+"boo-boo-kitty","calico","clorpoin","colourful","dave","dee-dee","earth","fancy","fire",
+"ghetto","ghost","gray","holiday","jess","kina","kitty","kuramecha","lucky","lucy",
+"marmalade","mermaid","mike","multi","neko-cool","neon","orange","peach","pink","rainbow",
+"robot","rose","royal","silver","silversky","socks","spirit","spooky","usa","valentine",
+"water","white-pink-nose","browndog","bug","caz","chocobo","dalmy","face","fox","lucydog",
+"moka","alien","bluemarine","brownbsddaemon","captaingoodnight","cokebottle","doom",
+"greenghost","metroid","mini","monstertruck","moon"];
+
+const clone = o => JSON.parse(JSON.stringify(o));
+let mapping = clone(DEFAULT);
+let active = STATES[0][0];
+let img = null;
+let skinName = "neko";
+
+const gridWrap = document.getElementById("gridWrap");
+const statesEl = document.getElementById("states");
+const out = document.getElementById("out");
+const statusEl = document.getElementById("status");
+const key = (c,r) => c+","+r;
+
+// ---- sélecteur de skin ----
+const skinSel = document.getElementById("skin");
+SKINS.forEach(s => { const o=document.createElement("option"); o.value=s; o.textContent=s; skinSel.appendChild(o); });
+skinSel.addEventListener("change", () => loadSkin(skinSel.value));
+
+function loadSkin(name){
+  skinName = name;
+  document.getElementById("dlname").textContent = name;
+  statusEl.textContent = "chargement…";
+  // d'abord local (assets), sinon l'archive en ligne
+  loadImg(`../assets/pets/${name}.png`, () => loadImg(SHEET_URL + name + ".png", () => {
+    statusEl.innerHTML = `<span style="color:#f88">impossible de charger ${name}.png</span>`;
+  }));
+}
+function loadImg(src, onerr){
+  const i = new Image();
+  i.onload = () => { img=i; statusEl.innerHTML = `<span class="ok">${src.split('/').pop()} ✓ (${i.width}×${i.height})</span>`; buildGrid(); render(); };
+  i.onerror = () => onerr && onerr();
+  i.src = src;
+}
+document.getElementById("file").addEventListener("change", e => {
+  const f=e.target.files[0]; if(!f) return;
+  skinName = f.name.replace(/\.png$/i,""); document.getElementById("dlname").textContent = skinName;
+  loadImg(URL.createObjectURL(f));
+});
+
+// ---- grille ----
+function buildGrid(){
+  if(!img) return;
+  const z = +document.getElementById("zoom").value;
+  gridWrap.innerHTML = "";
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const cv=document.createElement("canvas"); cv.width=CELL*z; cv.height=CELL*z; cv.className="cell";
+    const cx=cv.getContext("2d"); cx.imageSmoothingEnabled=false;
+    cx.fillStyle="#222"; cx.fillRect(0,0,cv.width,cv.height);
+    cx.drawImage(img, c*(CELL+SEP), r*(CELL+SEP), CELL, CELL, 0,0, CELL*z, CELL*z);
+    const wrap=document.createElement("div"); wrap.style.position="relative"; wrap.appendChild(cv);
+    const lbl=document.createElement("div"); lbl.className="lbl"; lbl.textContent=`${r},${c}`; wrap.appendChild(lbl);
+    const bdg=document.createElement("div"); bdg.className="badges"; bdg.dataset.k=key(c,r); wrap.appendChild(bdg);
+    cv.addEventListener("click", ()=> toggleCell(c,r));
+    gridWrap.appendChild(wrap);
+  }
+}
+document.getElementById("zoom").addEventListener("input", ()=>{ buildGrid(); render(); });
+
+function toggleCell(c,r){
+  const arr = mapping[active] || (mapping[active]=[]);
+  const idx = arr.findIndex(p => p[0]===c && p[1]===r);
+  if(idx>=0) arr.splice(idx,1); else arr.push([c,r]);
+  render();
+}
+
+// ---- panneau anims ----
+STATES.forEach(([n,desc])=>{
+  const d=document.createElement("div"); d.className="state"; d.dataset.name=n;
+  const hdr=document.createElement("div"); hdr.className="hdr";
+  hdr.innerHTML=`<span class="name">${n}</span><span class="hint">${desc}</span>`;
+  hdr.addEventListener("click", ()=>{ active=n; render(); });
+  const frames=document.createElement("div"); frames.className="frames"; frames.dataset.name=n;
+  d.appendChild(hdr); d.appendChild(frames); statesEl.appendChild(d);
+});
+
+function drawMini(c,r,z){
+  const cv=document.createElement("canvas"); cv.width=CELL*z; cv.height=CELL*z;
+  const cx=cv.getContext("2d"); cx.imageSmoothingEnabled=false;
+  cx.fillStyle="#222"; cx.fillRect(0,0,cv.width,cv.height);
+  if(img) cx.drawImage(img, c*(CELL+SEP), r*(CELL+SEP), CELL, CELL, 0,0, CELL*z, CELL*z);
+  return cv;
+}
+
+function render(){
+  [...statesEl.children].forEach(el=>{
+    const n=el.dataset.name;
+    el.classList.toggle("active", n===active);
+    const frames=el.querySelector(".frames"); frames.innerHTML="";
+    const arr=mapping[n]||[];
+    if(arr.length===0){ const e=document.createElement("span"); e.className="empty"; e.textContent="—"; frames.appendChild(e); }
+    arr.forEach(([c,r],fi)=>{
+      const mini=drawMini(c,r,2); mini.title=`frame ${fi}: ${r},${c} (clic = retirer)`; mini.style.cursor="pointer";
+      mini.addEventListener("click",()=>{ arr.splice(fi,1); render(); });
+      frames.appendChild(mini);
+    });
+  });
+  updateBadges(); updateJSON();
+}
+function updateBadges(){
+  document.querySelectorAll(".badges").forEach(b=> b.textContent="");
+  for(const [name,arr] of Object.entries(mapping)) (arr||[]).forEach(([c,r])=>{
+    const b=document.querySelector(`.badges[data-k="${key(c,r)}"]`);
+    if(b) b.textContent += (b.textContent?" ":"")+name;
+  });
+}
+function updateJSON(){ out.value = JSON.stringify(mapping, null, 1); }
+
+// ---- boutons ----
+document.getElementById("prefill").addEventListener("click", ()=>{ mapping=clone(DEFAULT); render(); });
+document.getElementById("clearActive").addEventListener("click", ()=>{ mapping[active]=[]; render(); });
+document.getElementById("clearAll").addEventListener("click", ()=>{ STATES.forEach(([n])=>mapping[n]=[]); render(); });
+document.getElementById("copy").addEventListener("click", ()=>{ out.select(); navigator.clipboard.writeText(out.value); });
+document.getElementById("download").addEventListener("click", ()=>{
+  const blob=new Blob([JSON.stringify(mapping,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`${skinName}.json`; a.click();
+});
+document.getElementById("loadjson").addEventListener("change", e=>{
+  const f=e.target.files[0]; if(!f) return;
+  f.text().then(t=>{ try{ mapping=JSON.parse(t); render(); statusEl.innerHTML='<span class="ok">JSON chargé</span>'; }
+    catch(err){ statusEl.innerHTML='<span style="color:#f88">JSON invalide</span>'; } });
+});
+
+loadSkin("neko");
+render();
+</script>
+</body>
+</html>
