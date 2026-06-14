@@ -61,102 +61,144 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     provider.load_from_data(
         r#"
         window.dashboard {
-            background-color: #0f172a;
-            color: #f8fafc;
+            background-color: #0b1019;
+            color: #e6edf3;
+            font-size: 14px;
         }
         .dashboard .sidebar {
-            background-color: #1e293b;
-            border-right: 1px solid #334155;
-            padding: 24px;
+            background-color: #0f1622;
+            border-right: 1px solid #1e2a3a;
+            padding: 28px 22px;
         }
         .dashboard .sidebar-title {
-            font-size: 24px;
+            font-size: 22px;
             font-weight: 800;
-            color: #38bdf8;
-            margin-bottom: 32px;
+            color: #e6edf3;
+            margin-bottom: 26px;
         }
         .dashboard .section-label {
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 600;
-            color: #94a3b8;
-            margin-top: 16px;
+            letter-spacing: 1px;
+            color: #6b7a8d;
+            margin-top: 18px;
             margin-bottom: 8px;
         }
+
+        /* Champs (dropdowns + entry) : surface sombre, accent au survol/focus */
         .dashboard dropdown {
-            background-color: #0f172a;
-            color: white;
-            border-radius: 8px;
-            border: 1px solid #475569;
-            padding: 6px;
-            margin-bottom: 16px;
+            margin-bottom: 14px;
+            border: none;
+            background: transparent;
         }
-        .dashboard dropdown popover {
-            background-color: #1e293b;
-            color: white;
-            border: 1px solid #334155;
-            border-radius: 8px;
+        .dashboard dropdown > button,
+        .dashboard entry {
+            background-image: none;
+            background-color: #16202e;
+            color: #e6edf3;
+            border-radius: 10px;
+            border: 1px solid #263448;
+            padding: 11px 14px;
+            min-height: 20px;
+            transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
         }
-        .dashboard button {
+        .dashboard dropdown > button:hover,
+        .dashboard entry:hover {
+            background-color: #1b2738;
+            border-color: #34465f;
+        }
+        .dashboard dropdown > button:focus,
+        .dashboard entry:focus-within {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+        }
+        .dashboard entry {
+            margin-bottom: 14px;
+            caret-color: #3b82f6;
+        }
+        .dashboard entry text { color: #e6edf3; }
+        .dashboard entry > text > placeholder { color: #5b6b7e; }
+
+        .dashboard dropdown popover,
+        .dashboard dropdown popover > contents {
+            background-color: #16202e;
+            color: #e6edf3;
+            border: 1px solid #263448;
+            border-radius: 12px;
+        }
+        .dashboard dropdown popover row {
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+        .dashboard dropdown popover row:selected {
+            background-color: #3b82f6;
+            color: white;
+        }
+
+        /* Boutons d'action */
+        .dashboard button.primary-btn {
             background-image: none;
             background-color: #3b82f6;
             color: white;
-            border-radius: 8px;
-            padding: 12px 20px;
-            font-weight: bold;
-            font-size: 14px;
-            border: 1px solid #2563eb;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border-radius: 10px;
+            padding: 13px 20px;
+            font-weight: 700;
+            border: none;
+            transition: background-color 0.15s ease, box-shadow 0.15s ease;
         }
-        .dashboard button:hover {
-            background-color: #2563eb;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        .dashboard button.primary-btn:hover {
+            background-color: #2f6fe0;
+            box-shadow: 0 6px 18px rgba(59, 130, 246, 0.35);
         }
         .dashboard button.close-btn {
+            background-image: none;
             background-color: transparent;
-            border: 1px solid #ef4444;
-            color: #ef4444;
-            margin-top: 16px;
+            border: 1px solid #3a2230;
+            color: #f87171;
+            border-radius: 10px;
+            padding: 11px 20px;
+            font-weight: 600;
+            margin-top: 12px;
+            transition: all 0.15s ease;
         }
         .dashboard button.close-btn:hover {
             background-color: #ef4444;
+            border-color: #ef4444;
             color: white;
-            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
         }
-        .dashboard .main-area {
-            padding: 24px;
-        }
+
+        .dashboard .main-area { padding: 28px; }
         .dashboard .main-title {
-            font-size: 20px;
-            font-weight: 600;
-            color: #e2e8f0;
-            margin-bottom: 24px;
+            font-size: 18px;
+            font-weight: 700;
+            color: #e6edf3;
+            margin-bottom: 22px;
         }
         .dashboard list {
-            background-color: #1e293b;
-            border-radius: 12px;
-            padding: 8px;
+            background-color: transparent;
+            padding: 4px;
         }
         .dashboard row {
-            padding: 12px 16px;
+            padding: 11px 14px;
             border-radius: 8px;
-            margin-bottom: 4px;
-            color: #cbd5e1;
+            margin-bottom: 3px;
+            color: #aeb9c7;
             font-weight: 500;
-            transition: all 0.15s ease;
+            transition: all 0.12s ease;
         }
         .dashboard row:selected {
             background-color: #3b82f6;
             color: white;
-            font-weight: bold;
-            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+            font-weight: 600;
         }
         .dashboard row:hover:not(:selected) {
-            background-color: #334155;
+            background-color: #1b2738;
+            color: #e6edf3;
         }
         .dashboard scrolledwindow {
-            border: 1px solid #334155;
-            border-radius: 12px;
-            background-color: #1e293b;
+            border: 1px solid #1e2a3a;
+            border-radius: 14px;
+            background-color: #0f1622;
         }
         "#,
     );
@@ -353,6 +395,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     sidebar.append(&spacer);
 
     let save_btn = Button::with_label(&crate::i18n::t("save_mapping"));
+    save_btn.add_css_class("primary-btn");
     sidebar.append(&save_btn);
 
     let close_btn = Button::with_label(&crate::i18n::t("close"));
@@ -361,6 +404,10 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
 
     let credits = Label::new(Some(&crate::i18n::t("credits")));
     credits.set_wrap(true);
+    // Borne la largeur « naturelle » : sans ça, un label wrap réclame la largeur
+    // de tout son texte sur une ligne → la sidebar gonflerait pour le contenir.
+    credits.set_max_width_chars(34);
+    credits.set_xalign(0.0);
     credits.set_opacity(0.6);
     credits.add_css_class("credits-label");
     credits.set_margin_top(16);
