@@ -61,7 +61,38 @@ pub fn load() -> Config {
     cfg
 }
 
-#[allow(dead_code)] // utilisé par le menu tray (lot suivant)
+/// État partagé entre le thread tray (qui écrit) et la boucle GTK (qui relit).
+/// `version` est incrémenté à chaque changement ; la boucle GTK recharge les
+/// ressources quand elle voit une nouvelle version.
+pub struct Control {
+    pub skin: String,
+    pub toy: String,
+    pub scale: f64,
+    pub twitch_channel: String,
+    pub version: u64,
+}
+
+impl Control {
+    pub fn from_config(c: &Config) -> Self {
+        Control {
+            skin: c.skin.clone(),
+            toy: c.toy.clone(),
+            scale: c.scale,
+            twitch_channel: c.twitch_channel.clone(),
+            version: 0,
+        }
+    }
+
+    pub fn to_config(&self) -> Config {
+        Config {
+            skin: self.skin.clone(),
+            toy: self.toy.clone(),
+            scale: self.scale,
+            twitch_channel: self.twitch_channel.clone(),
+        }
+    }
+}
+
 pub fn save(cfg: &Config) {
     let path = config_path();
     if let Some(dir) = path.parent() {

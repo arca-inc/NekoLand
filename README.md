@@ -77,9 +77,15 @@ NEKO_TWITCH_CHANNEL=ton_user_id cargo run
 
 ## Tray icon
 
-Icône de barre système via `ksni` (StatusNotifierItem) — menu **Quitter**.
-L'icône reprend la pose idle du skin courant. Nécessite un hôte SNI (Waybar avec
-le module `tray`, etc.).
+Icône de barre système via `ksni` (StatusNotifierItem). Menus :
+- **Chat** — choisir le skin (liste scannée dans `assets/pets/`)
+- **Pelote** — choisir le jouet (`assets/toys/`)
+- **Taille** — 1× / 1,5× / 2× / 3×
+- **Quitter**
+
+Chaque choix s'applique **à chaud** (sans relancer) et est **persisté** dans
+`~/.config/neko-desktop/config.json`. Nécessite un hôte SNI (Waybar avec le
+module `tray`, etc.).
 
 ## Multi-écran
 

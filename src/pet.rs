@@ -109,6 +109,17 @@ impl Pet {
         (self.bounds_h - self.sprite).max(0.0)
     }
 
+    /// Remplace le jeu de sprites (changement de skin à chaud).
+    pub fn set_sprites(&mut self, sprites: Sprites) {
+        self.sprites = sprites;
+        self.loop_counter = 0;
+    }
+
+    /// Met à jour la taille du sprite à l'écran (changement d'échelle à chaud).
+    pub fn set_sprite_size(&mut self, sprite: f64) {
+        self.sprite = sprite;
+    }
+
     /// Frame courante en **pixels** dans le sprite-sheet (coin haut-gauche de la
     /// tuile 32×32 à blitter).
     pub fn current_frame(&self) -> (i32, i32) {

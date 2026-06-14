@@ -46,6 +46,11 @@ impl Toy {
         toy
     }
 
+    /// Met à jour la taille à l'écran (changement d'échelle à chaud).
+    pub fn set_size(&mut self, size: f64) {
+        self.size = size;
+    }
+
     fn max_x(&self) -> f64 {
         (self.bounds_w - self.size).max(0.0)
     }

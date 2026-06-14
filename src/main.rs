@@ -79,8 +79,16 @@ fn build_ui(app: &Application) {
     let toy = Rc::new(RefCell::new(Toy::new(total_w, total_h, sprite_size)));
     let toy_pix = Rc::new(RefCell::new(load_sprite(&toys_png(&assets, &cfg.toy))));
 
-    // ---- Tray icon ----
-    tray::spawn(pet_pix.borrow().as_ref());
+    // ---- Tray icon + état de contrôle partagé (tray ↔ GTK) ----
+    let control = Arc::new(Mutex::new(config::Control::from_config(&cfg)));
+    let scales = vec![1.0, 1.5, 2.0, 3.0];
+    tray::spawn(
+        pet_pix.borrow().as_ref(),
+        list_pngs(&assets.join("pets")),
+        list_pngs(&assets.join("toys")),
+        scales,
+        control.clone(),
+    );
 
     // ---- Un overlay layer-shell par moniteur ----
     let mut areas = Vec::with_capacity(monitors.len());
@@ -154,9 +162,31 @@ fn build_ui(app: &Application) {
     {
         let pet = pet.clone();
         let toy = toy.clone();
+        let pet_pix = pet_pix.clone();
+        let toy_pix = toy_pix.clone();
+        let scale = scale.clone();
         let shared = shared.clone();
+        let control = control.clone();
+        let assets = assets.clone();
         let mut rest: i32 = 0; // ticks de repos restants après une prise
+        let mut seen_version: u64 = 0;
         glib::timeout_add_local(Duration::from_millis(100), move || {
+            // Reload à chaud si le tray a changé un réglage.
+            let (version, skin, toyname, sc) = {
+                let c = control.lock().unwrap();
+                (c.version, c.skin.clone(), c.toy.clone(), c.scale)
+            };
+            if version != seen_version {
+                seen_version = version;
+                *pet_pix.borrow_mut() = load_sprite(&pets_png(&assets, &skin));
+                pet.borrow_mut().set_sprites(load_mapping(&assets, &skin));
+                *toy_pix.borrow_mut() = load_sprite(&toys_png(&assets, &toyname));
+                let size = pet::TILE as f64 * sc;
+                pet.borrow_mut().set_sprite_size(size);
+                toy.borrow_mut().set_size(size);
+                scale.set(sc);
+            }
+
             let (twx, twy, twitch_active) = {
                 let t = shared.lock().unwrap();
                 (t.x, t.y, t.active)
@@ -227,6 +257,23 @@ fn assets_dir() -> PathBuf {
         .into_iter()
         .find(|p| p.is_dir())
         .unwrap_or_else(|| PathBuf::from("assets"))
+}
+
+/// Noms (sans extension) des `.png` d'un répertoire, triés — pour les menus tray.
+fn list_pngs(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension()? == "png")
+                .then(|| p.file_stem()?.to_str().map(String::from))
+                .flatten()
+        })
+        .collect();
+    names.sort();
+    names
 }
 
 fn pets_png(assets: &Path, skin: &str) -> PathBuf {

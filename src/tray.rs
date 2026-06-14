@@ -1,13 +1,38 @@
 //! Icône de barre système (StatusNotifierItem via `ksni`).
 //!
-//! `ksni` lance son propre thread D-Bus, indépendant de la boucle GTK. Le menu
-//! permet (pour l'instant) de quitter l'application.
+//! `ksni` lance son propre thread D-Bus, indépendant de la boucle GTK. Les
+//! sous-menus permettent de changer le skin, la pelote et la taille à chaud :
+//! chaque choix met à jour [`Control`] (que la boucle GTK relit) et persiste la
+//! config sur disque.
+
+use std::sync::{Arc, Mutex};
 
 use gtk::gdk_pixbuf::Pixbuf;
 use ksni::{Icon, MenuItem, Tray};
 
+use crate::config::{self, Control};
+
 struct NekoTray {
     icon: Vec<Icon>,
+    skins: Vec<String>,
+    toys: Vec<String>,
+    scales: Vec<f64>,
+    skin_idx: usize,
+    toy_idx: usize,
+    scale_idx: usize,
+    control: Arc<Mutex<Control>>,
+}
+
+impl NekoTray {
+    /// Pousse l'état courant dans `Control` (bump version) et sauve la config.
+    fn commit(&self) {
+        let mut c = self.control.lock().unwrap();
+        c.skin = self.skins[self.skin_idx].clone();
+        c.toy = self.toys[self.toy_idx].clone();
+        c.scale = self.scales[self.scale_idx];
+        c.version += 1;
+        config::save(&c.to_config());
+    }
 }
 
 impl Tray for NekoTray {
@@ -18,29 +43,115 @@ impl Tray for NekoTray {
         "Neko".into()
     }
     fn icon_name(&self) -> String {
-        // Fallback si l'hôte ignore le pixmap.
-        "face-smile".into()
+        "face-smile".into() // fallback si l'hôte ignore le pixmap
     }
     fn icon_pixmap(&self) -> Vec<Icon> {
         self.icon.clone()
     }
+
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        use ksni::menu::StandardItem;
-        vec![StandardItem {
-            label: "Quitter".into(),
-            icon_name: "application-exit".into(),
-            activate: Box::new(|_| std::process::exit(0)),
-            ..Default::default()
-        }
-        .into()]
+        use ksni::menu::{RadioGroup, RadioItem, StandardItem, SubMenu};
+
+        let radio = |labels: Vec<String>,
+                     selected: usize,
+                     select: Box<dyn Fn(&mut NekoTray, usize)>|
+         -> MenuItem<NekoTray> {
+            RadioGroup {
+                selected,
+                select,
+                options: labels
+                    .into_iter()
+                    .map(|label| RadioItem { label, ..Default::default() })
+                    .collect(),
+                ..Default::default()
+            }
+            .into()
+        };
+
+        vec![
+            SubMenu {
+                label: "Chat".into(),
+                submenu: vec![radio(
+                    self.skins.clone(),
+                    self.skin_idx,
+                    Box::new(|t, i| {
+                        t.skin_idx = i;
+                        t.commit();
+                    }),
+                )],
+                ..Default::default()
+            }
+            .into(),
+            SubMenu {
+                label: "Pelote".into(),
+                submenu: vec![radio(
+                    self.toys.clone(),
+                    self.toy_idx,
+                    Box::new(|t, i| {
+                        t.toy_idx = i;
+                        t.commit();
+                    }),
+                )],
+                ..Default::default()
+            }
+            .into(),
+            SubMenu {
+                label: "Taille".into(),
+                submenu: vec![radio(
+                    self.scales.iter().map(|s| format!("{s}×")).collect(),
+                    self.scale_idx,
+                    Box::new(|t, i| {
+                        t.scale_idx = i;
+                        t.commit();
+                    }),
+                )],
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+            StandardItem {
+                label: "Quitter".into(),
+                icon_name: "application-exit".into(),
+                activate: Box::new(|_| std::process::exit(0)),
+                ..Default::default()
+            }
+            .into(),
+        ]
     }
 }
 
-/// Lance le tray dans son thread. `sprite` sert à fabriquer l'icône (tuile idle).
-pub fn spawn(sprite: Option<&Pixbuf>) {
+/// Lance le tray. `sprite` fabrique l'icône ; les listes alimentent les menus ;
+/// `control` reçoit les changements.
+pub fn spawn(
+    sprite: Option<&Pixbuf>,
+    skins: Vec<String>,
+    toys: Vec<String>,
+    scales: Vec<f64>,
+    control: Arc<Mutex<Control>>,
+) {
+    let (skin_idx, toy_idx, scale_idx) = {
+        let c = control.lock().unwrap();
+        let skin_idx = skins.iter().position(|s| *s == c.skin).unwrap_or(0);
+        let toy_idx = toys.iter().position(|t| *t == c.toy).unwrap_or(0);
+        let scale_idx = scales
+            .iter()
+            .position(|s| (s - c.scale).abs() < 0.01)
+            .unwrap_or(0);
+        (skin_idx, toy_idx, scale_idx)
+    };
+
     let icon = sprite.map(icon_from_tile).into_iter().collect();
-    let service = ksni::TrayService::new(NekoTray { icon });
-    service.spawn();
+    let tray = NekoTray {
+        icon,
+        skins,
+        toys,
+        scales,
+        skin_idx,
+        toy_idx,
+        scale_idx,
+        control,
+    };
+    ksni::TrayService::new(tray).spawn();
 }
 
 /// Convertit la tuile (0,0) — la pose idle — en icône ARGB32 attendue par SNI.
