@@ -12,6 +12,7 @@ pub mod config;
 mod dock;
 pub mod i18n;
 pub mod mapper;
+mod mouse;
 pub mod pet;
 pub mod toy;
 #[cfg(target_os = "linux")]
@@ -48,6 +49,8 @@ const DEFAULT_SKIN: &str = "neko";
 const REST_TICKS: i32 = 25;
 /// Focus continu d'une fenêtre au-delà duquel le chat passe en mode « dock ».
 const DOCK_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+/// Délai sans clic Twitch après lequel le chat reprend son comportement normal.
+const TWITCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// État pour le debug visuel (overlay), partagé tick → fonctions de dessin.
 struct Dbg {
@@ -155,6 +158,7 @@ fn build_ui(app: &Application) {
         x: total_w / 2.0,
         y: total_h / 2.0,
         active: false,
+        updated: std::time::Instant::now(),
     }));
 
     // ---- Ressources partagées (cellules → reload à chaud possible) ----
@@ -180,7 +184,7 @@ fn build_ui(app: &Application) {
     // ---- Tray icon + état de contrôle partagé (tray ↔ GTK) ----
     let control = Arc::new(Mutex::new(config::Control::from_config(&cfg)));
     let scales = vec![1.0, 1.5, 2.0, 3.0];
-    let modes: Vec<String> = ["Pelote", "Autonome", "Sommeil"]
+    let modes: Vec<String> = ["Pelote", "Autonome", "Souris", "Sommeil"]
         .iter()
         .map(|s| s.to_string())
         .collect();
@@ -366,6 +370,8 @@ fn build_ui(app: &Application) {
 
     // ---- Suivi de la fenêtre active (mode dock) ----
     let focus = dock::spawn();
+    // ---- Suivi du curseur (mode Souris) ----
+    let cursor = mouse::spawn();
 
     // ---- Tick d'animation ~10 fps (logique de jeu + redessine les overlays) ----
     {
@@ -379,6 +385,7 @@ fn build_ui(app: &Application) {
         let control = control.clone();
         let assets = assets.clone();
         let focus = focus.clone();
+        let cursor = cursor.clone();
         let dbg = dbg.clone();
         let mut rest: i32 = 0; // ticks de repos restants après une prise
         let mut seen_version: u64 = 0;
@@ -388,6 +395,7 @@ fn build_ui(app: &Application) {
         let mut json_mtime = file_mtime(&pets_json(&assets, &current_skin));
         let mut wander = (total_w / 2.0, total_h / 2.0, 0.0_f64); // (x, y, compteur)
         let mut dbg_tick: u64 = 0;
+        let mut last_saved = cfg.clone(); // dernière config écrite sur disque
         glib::timeout_add_local(Duration::from_millis(100), move || {
             // Reload à chaud si le tray a changé un réglage.
             let (version, skin, toyname, sc, cur_mode, open_config) = {
@@ -415,7 +423,7 @@ fn build_ui(app: &Application) {
                 } else {
                     toy.borrow_mut().hide();
                 }
-                mode = cur_mode;
+                mode = cur_mode.clone();
                 current_skin = skin;
                 json_mtime = file_mtime(&pets_json(&assets, &current_skin));
             }
@@ -427,9 +435,30 @@ fn build_ui(app: &Application) {
                 pet.borrow_mut().set_sprites(load_mapping(&assets, &current_skin));
             }
 
+            // Changement de mode (dropdown) — appliqué à chaque tick, pas seulement
+            // lors d'un reload de version. La pelote n'existe qu'en mode « Pelote ».
+            if cur_mode != mode {
+                mode = cur_mode.clone();
+                if mode == "Pelote" {
+                    toy.borrow_mut().spawn();
+                } else {
+                    toy.borrow_mut().hide();
+                }
+            }
+
+            // Persistance : si un réglage a changé (mode, canal, skin…), on réécrit
+            // la config sur disque (rien n'était sauvegardé auparavant).
+            let snapshot = { control.lock().unwrap().to_config() };
+            if snapshot != last_saved {
+                config::save(&snapshot);
+                last_saved = snapshot;
+            }
+
+            // Clic Twitch : prioritaire, mais expire après TWITCH_TIMEOUT sans
+            // nouveau clic → le chat reprend son comportement normal.
             let (twx, twy, twitch_active) = {
                 let t = shared.lock().unwrap();
-                (t.x, t.y, t.active)
+                (t.x, t.y, t.active && t.updated.elapsed() < TWITCH_TIMEOUT)
             };
             let (px, py) = {
                 let p = pet.borrow();
@@ -448,6 +477,17 @@ fn build_ui(app: &Application) {
             } else if mode == "Sommeil" {
                 behavior = "sommeil";
                 cat_center // reste sur place → la pose « arrivée » joue le sommeil
+            } else if mode == "Souris" {
+                // Chasse le curseur : position globale du compositeur → espace union.
+                let c = cursor.lock().unwrap();
+                if c.valid {
+                    behavior = "souris";
+                    ((c.x - orig_x as f64).clamp(0.0, total_w),
+                     (c.y - orig_y as f64).clamp(0.0, total_h))
+                } else {
+                    behavior = "souris";
+                    cat_center // hyprctl indisponible → le chat reste sur place
+                }
             } else if mode == "Autonome" {
                 // Si une fenêtre est focus depuis assez longtemps → mode « dock » :
                 // le chat se promène sous son bord bas, sans monter ni descendre.
@@ -551,13 +591,42 @@ fn build_ui(app: &Application) {
         });
     }
 
-    // ---- Thread Twitch Heat (si un canal est configuré) ----
-    if !cfg.twitch_channel.is_empty() {
+    // ---- Superviseur Twitch Heat ----
+    // Surveille le canal configuré (modifiable à chaud depuis le dashboard) et
+    // (re)connecte en conséquence : un canal vide coupe la connexion, un nouveau
+    // canal relance la tâche. Évite d'avoir à redémarrer l'app pour streamer.
+    {
         let shared = shared.clone();
-        let channel = cfg.twitch_channel.clone();
+        let control = control.clone();
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
-            rt.block_on(twitch::run(channel, shared, total_w, total_h));
+            rt.block_on(async move {
+                let mut current = String::new();
+                let mut handle: Option<tokio::task::JoinHandle<()>> = None;
+                loop {
+                    let desired = control.lock().unwrap().twitch_channel.clone();
+                    if desired != current {
+                        if let Some(h) = handle.take() {
+                            h.abort();
+                        }
+                        // Oublie le dernier clic du canal précédent.
+                        {
+                            let mut t = shared.lock().unwrap();
+                            t.active = false;
+                        }
+                        current = desired.clone();
+                        if !current.is_empty() {
+                            handle = Some(tokio::spawn(twitch::run(
+                                current.clone(),
+                                shared.clone(),
+                                total_w,
+                                total_h,
+                            )));
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            });
         });
     }
 }

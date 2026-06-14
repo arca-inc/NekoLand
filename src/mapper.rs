@@ -14,8 +14,8 @@ use gtk::gdk::prelude::*;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{
-    Application, ApplicationWindow, Box as GtkBox, Button, DrawingArea, DropDown, Grid, Label,
-    ListBox, ListBoxRow, Orientation, ScrolledWindow, StringList,
+    Application, ApplicationWindow, Box as GtkBox, Button, DrawingArea, DropDown, Entry, Grid,
+    Label, ListBox, ListBoxRow, Orientation, ScrolledWindow, StringList,
 };
 use crate::config::Control;
 
@@ -30,7 +30,7 @@ const ANIMS: &[&str] = &[
     "scratchWallW", "scratchWallE", "N", "NE", "E", "SE", "S", "SW", "W", "NW",
 ];
 
-const MODES: &[&str] = &["Pelote", "Autonome", "Sommeil"];
+const MODES: &[&str] = &["Pelote", "Autonome", "Souris", "Sommeil"];
 const SCALES: &[(&str, f64)] = &[("1.0x", 1.0), ("1.5x", 1.5), ("2.0x", 2.0), ("3.0x", 3.0)];
 
 type Mapping = HashMap<String, Vec<(i32, i32)>>;
@@ -46,9 +46,9 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64
 }
 
 pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
-    let (initial_skin, initial_toy, initial_mode, initial_scale) = {
+    let (initial_skin, initial_toy, initial_mode, initial_scale, initial_twitch) = {
         let c = control.lock().unwrap();
-        (c.skin.clone(), c.toy.clone(), c.mode.clone(), c.scale)
+        (c.skin.clone(), c.toy.clone(), c.mode.clone(), c.scale, c.twitch_channel.clone())
     };
 
     let json_path = Rc::new(RefCell::new(assets.join("pets").join(format!("{initial_skin}.json"))));
@@ -199,6 +199,17 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         mode_drop.set_selected(pos as u32);
     }
     sidebar.append(&mode_drop);
+
+    // -- Canal Twitch (mode streamer) --
+    let l_twitch = Label::new(Some(&crate::i18n::t("twitch_channel")));
+    l_twitch.add_css_class("section-label");
+    l_twitch.set_halign(gtk::Align::Start);
+    sidebar.append(&l_twitch);
+
+    let twitch_entry = Entry::new();
+    twitch_entry.set_placeholder_text(Some(&crate::i18n::t("twitch_placeholder")));
+    twitch_entry.set_text(&initial_twitch);
+    sidebar.append(&twitch_entry);
 
     // -- Skin --
     let l_skin = Label::new(Some(&crate::i18n::t("skin")));
@@ -505,6 +516,24 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
                 }
             }
         });
+    }
+
+    // Changement de canal Twitch — appliqué sur Entrée ou perte de focus, pas à
+    // chaque frappe (sinon le superviseur tenterait de se connecter à un nom partiel).
+    {
+        let control = control.clone();
+        twitch_entry.connect_activate(move |e| {
+            control.lock().unwrap().twitch_channel = e.text().trim().to_string();
+        });
+    }
+    {
+        let control = control.clone();
+        let entry = twitch_entry.clone();
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_leave(move |_| {
+            control.lock().unwrap().twitch_channel = entry.text().trim().to_string();
+        });
+        twitch_entry.add_controller(focus);
     }
 
     // Changement de Pelote

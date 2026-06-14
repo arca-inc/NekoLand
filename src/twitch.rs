@@ -5,7 +5,7 @@
 //! pixels écran et on les pousse dans l'état partagé que la boucle GTK lit.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
@@ -15,8 +15,12 @@ use tokio_tungstenite::tungstenite::Message;
 pub struct Target {
     pub x: f64,
     pub y: f64,
-    /// Devient vrai dès qu'un clic est reçu → le chat passe en mode CHASE.
+    /// Vrai dès qu'un clic est reçu → le chat passe en mode CHASE. La boucle GTK
+    /// le considère expiré quand `updated` est trop ancien (cf. `TWITCH_TIMEOUT`),
+    /// pour que le chat reprenne son comportement normal entre deux clics.
     pub active: bool,
+    /// Instant du dernier clic Twitch reçu.
+    pub updated: Instant,
 }
 
 /// Boucle de connexion (reconnexion automatique). À lancer sur un runtime tokio.
@@ -42,6 +46,7 @@ pub async fn run(channel_id: String, shared: Arc<Mutex<Target>>, screen_w: f64, 
                         t.x = x * screen_w;
                         t.y = y * screen_h;
                         t.active = true;
+                        t.updated = Instant::now();
                     }
                 }
                 eprintln!("[twitch] déconnecté, nouvelle tentative…");

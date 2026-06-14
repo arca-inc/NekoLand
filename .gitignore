@@ -1,1 +1,11 @@
 /target
+
+# Logs
+*.log
+log*.txt
+run_log.txt
+
+# Brouillons / expérimentations locales
+scratch/
+scratch2/
+test_*.rs
