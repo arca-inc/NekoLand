@@ -118,7 +118,7 @@ fn build_ui(app: &Application) {
 
     // ---- Fond de fenêtre transparent (sinon l'overlay masque tout) ----
     let provider = gtk::CssProvider::new();
-    provider.load_from_data("window, window.background { background: transparent; }");
+    provider.load_from_data("window, window.background, .background { background: transparent !important; background-color: transparent !important; }");
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
