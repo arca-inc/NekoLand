@@ -118,7 +118,7 @@ fn build_ui(app: &Application) {
 
     // ---- Fond de fenêtre transparent (sinon l'overlay masque tout) ----
     let provider = gtk::CssProvider::new();
-    provider.load_from_data("window, window.background, .background { background: transparent !important; background-color: transparent !important; }");
+    provider.load_from_data("window.transparent-overlay, window.transparent-overlay.background, .transparent-overlay { background: transparent !important; background-color: transparent !important; }");
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
@@ -176,6 +176,7 @@ fn build_ui(app: &Application) {
         let off_y = (geo.y() - orig_y) as f64;
 
         let window = ApplicationWindow::builder().application(app).build();
+        window.add_css_class("transparent-overlay");
         #[cfg(target_os = "linux")]
         {
             window.init_layer_shell();
