@@ -41,11 +41,12 @@ Format : grille 8×6, tuiles 32×32 avec **1 px de séparation** (origine d'une
 tuile = `(col*33, row*33)`). Le fond plein est retiré au chargement en rendant
 transparente la couleur du pixel (0,0) (`Pixbuf::add_alpha`).
 
-Le mapping cellule → animation a été fait via **`tools/sprite_mapper.html`**
-(ouvre-le dans un navigateur, clique pour assigner, récupère le JSON). Pour
-changer de skin : dépose un autre `*.png` de l'archive dans `assets/pets/`,
-re-mappe-le si son agencement diffère, et mets à jour les constantes dans
-`src/pet.rs`.
+Le mapping cellule → animation se fait via **`tools/sprite_mapper.html`**,
+accessible directement depuis le tray (**« Configurer les sprites… »**, pré-réglé
+sur le skin courant). Clique pour assigner les frames, puis **« Enregistrer dans
+assets/pets »** : le `.json` est écrit sur place (File System Access API) et l'app
+**recharge le mapping à chaud** (surveillance du mtime). Pour ajouter un skin :
+dépose son `*.png` dans `assets/pets/` et mappe-le.
 
 ## Dépendances système (Gentoo)
 

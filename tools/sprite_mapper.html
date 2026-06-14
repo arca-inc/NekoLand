@@ -62,9 +62,13 @@
   <p class="hint">Format <code>[colonne, ligne]</code> par frame.<br>
      À placer dans <code>assets/pets/&lt;skin&gt;.json</code>.</p>
   <div class="toolbar">
+    <button id="save">💾 Enregistrer dans assets/pets</button>
     <button id="download">⬇ Télécharger <span id="dlname">neko</span>.json</button>
     <label class="hint">éditer un .json : <input type="file" id="loadjson" accept=".json,application/json"></label>
   </div>
+  <p class="hint">« Enregistrer » écrit directement <code>&lt;skin&gt;.json</code> (choisis
+     le dossier <code>assets/pets</code> la 1ʳᵉ fois) ; l'app recharge le mapping à
+     chaud. Sinon « Télécharger » et déplace le fichier à la main.</p>
   <button id="copy">Copier le JSON</button>
   <textarea id="out" readonly></textarea>
 </div>
@@ -220,13 +224,43 @@ document.getElementById("download").addEventListener("click", ()=>{
   const blob=new Blob([JSON.stringify(mapping,null,2)],{type:"application/json"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`${skinName}.json`; a.click();
 });
+
+// Enregistrement direct dans assets/pets via File System Access API.
+let dirHandle = null; // mémorisé entre sauvegardes
+document.getElementById("save").addEventListener("click", async ()=>{
+  const data = JSON.stringify(mapping, null, 2);
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: `${skinName}.json`,
+        startIn: dirHandle || undefined,
+        types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+      });
+      const w = await handle.createWritable(); await w.write(data); await w.close();
+      dirHandle = handle;
+      statusEl.innerHTML = `<span class="ok">enregistré ✓ (reload à chaud)</span>`;
+      return;
+    } catch (e) { if (e.name === "AbortError") return; }
+  }
+  // Fallback navigateurs sans l'API : téléchargement.
+  const blob=new Blob([data],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`${skinName}.json`; a.click();
+  statusEl.innerHTML = `<span class="hint">téléchargé — déplace-le dans assets/pets/</span>`;
+});
 document.getElementById("loadjson").addEventListener("change", e=>{
   const f=e.target.files[0]; if(!f) return;
   f.text().then(t=>{ try{ mapping=JSON.parse(t); render(); statusEl.innerHTML='<span class="ok">JSON chargé</span>'; }
     catch(err){ statusEl.innerHTML='<span style="color:#f88">JSON invalide</span>'; } });
 });
 
-loadSkin("neko");
+// Skin initial : paramètre ?skin= (passé par l'app via le tray), sinon neko.
+const initSkin = new URLSearchParams(location.search).get("skin") || "neko";
+if (!SKINS.includes(initSkin)) {
+  const o = document.createElement("option"); o.value = initSkin; o.textContent = initSkin;
+  skinSel.insertBefore(o, skinSel.firstChild);
+}
+skinSel.value = initSkin;
+loadSkin(initSkin);
 render();
 </script>
 </body>

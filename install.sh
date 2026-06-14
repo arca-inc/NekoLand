@@ -23,6 +23,10 @@ echo "==> Assets → ${DATA_DIR}/assets"
 mkdir -p "${DATA_DIR}/assets"
 cp -r "${SCRIPT_DIR}/assets/." "${DATA_DIR}/assets/"
 
+echo "==> Outils → ${DATA_DIR}/tools"
+mkdir -p "${DATA_DIR}/tools"
+cp -r "${SCRIPT_DIR}/tools/." "${DATA_DIR}/tools/"
+
 echo "==> Entrées .desktop"
 mkdir -p "${APP_DIR}" "${AUTOSTART_DIR}"
 read -r -d '' DESKTOP <<EOF || true

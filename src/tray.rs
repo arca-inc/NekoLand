@@ -22,6 +22,7 @@ struct NekoTray {
     toy_idx: usize,
     scale_idx: usize,
     mode_idx: usize,
+    mapper: String,
     control: Arc<Mutex<Control>>,
 }
 
@@ -35,6 +36,13 @@ impl NekoTray {
         c.mode = self.modes[self.mode_idx].clone();
         c.version += 1;
         config::save(&c.to_config());
+    }
+
+    /// Ouvre l'outil de mapping des sprites, pré-réglé sur le skin courant.
+    fn open_mapper(&self) {
+        let skin = self.skins.get(self.skin_idx).cloned().unwrap_or_default();
+        let url = format!("file://{}?skin={}", self.mapper, skin);
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     }
 }
 
@@ -126,6 +134,13 @@ impl Tray for NekoTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
+                label: "Configurer les sprites…".into(),
+                icon_name: "preferences-system".into(),
+                activate: Box::new(|t: &mut NekoTray| t.open_mapper()),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
                 label: "Quitter".into(),
                 icon_name: "application-exit".into(),
                 activate: Box::new(|_| std::process::exit(0)),
@@ -144,6 +159,7 @@ pub fn spawn(
     toys: Vec<String>,
     scales: Vec<f64>,
     modes: Vec<String>,
+    mapper: String,
     control: Arc<Mutex<Control>>,
 ) {
     let (skin_idx, toy_idx, scale_idx, mode_idx) = {
@@ -169,6 +185,7 @@ pub fn spawn(
         toy_idx,
         scale_idx,
         mode_idx,
+        mapper,
         control,
     };
     ksni::TrayService::new(tray).spawn();
