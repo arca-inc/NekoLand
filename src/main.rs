@@ -8,11 +8,12 @@
 //!   - Le chat poursuit une pelote (toy) ; clics Twitch Heat prioritaires.
 //!   - Réglages persistants (config.json) ; icône de barre système (ksni).
 
-mod config;
+pub mod config;
 mod dock;
-mod mapper;
-mod pet;
-mod toy;
+pub mod i18n;
+pub mod mapper;
+pub mod pet;
+pub mod toy;
 mod tray;
 mod twitch;
 mod util;
@@ -53,6 +54,9 @@ struct Dbg {
 }
 
 fn main() -> glib::ExitCode {
+    // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
+    std::env::set_var("GSK_RENDERER", "cairo");
+
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
     app.run()
@@ -307,7 +311,7 @@ fn build_ui(app: &Application) {
             // Ouverture de l'éditeur de sprites (demandée depuis le tray).
             if open_config != seen_open {
                 seen_open = open_config;
-                mapper::open(&app, &assets, &current_skin, pet_pix.borrow().clone());
+                mapper::open(&app, assets.clone(), control.clone());
             }
             if version != seen_version {
                 seen_version = version;
@@ -366,7 +370,7 @@ fn build_ui(app: &Application) {
                 };
                 if let Some((wx, wy, ww, wh)) = docked {
                     behavior = "dock";
-                    let dock_y = ((wy + wh) - orig_y as f64).clamp(0.0, max_y);
+                    let dock_y = ((wy + wh) - size - orig_y as f64).clamp(0.0, max_y);
                     pet.borrow_mut().y = dock_y; // bloque la hauteur
                     // Bornes du centre du chat sous la fenêtre.
                     let cmin = (wx - orig_x as f64 + half).clamp(half, total_w - half);
@@ -497,7 +501,7 @@ fn assets_dir() -> PathBuf {
 }
 
 /// Noms (sans extension) des `.png` d'un répertoire, triés — pour les menus tray.
-fn list_pngs(dir: &Path) -> Vec<String> {
+pub fn list_pngs(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -549,7 +553,7 @@ fn load_mapping(assets: &Path, skin: &str) -> Sprites {
 /// Charge un sprite-sheet et rend transparente la couleur de fond — définie comme
 /// celle du pixel (0,0) — **uniquement si ce pixel est opaque** (sinon le sheet a
 /// déjà son propre alpha et on n'y touche pas).
-fn load_sprite(path: &Path) -> Option<Pixbuf> {
+pub fn load_sprite(path: &Path) -> Option<Pixbuf> {
     let pixbuf = Pixbuf::from_file(path)
         .map_err(|_| eprintln!("[neko] sprite introuvable : {}", path.display()))
         .ok()?;

@@ -50,13 +50,17 @@ impl Sprites {
         Ok(Sprites { clips })
     }
 
-    /// Frames d'un clip (fallback sur la tuile (0,0) si absent/vide).
+    /// Frames d'un clip (fallback sur IDLE, puis la tuile (0,0) si absent/vide).
     fn frames(&self, clip: &str) -> &[(i32, i32)] {
-        self.clips
-            .get(clip)
-            .map(Vec::as_slice)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&[(0, 0)])
+        if let Some(frames) = self.clips.get(clip).filter(|s| !s.is_empty()) {
+            return frames;
+        }
+        if clip != IDLE {
+            if let Some(idle_frames) = self.clips.get(IDLE).filter(|s| !s.is_empty()) {
+                return idle_frames;
+            }
+        }
+        &[(0, 0)]
     }
 }
 
