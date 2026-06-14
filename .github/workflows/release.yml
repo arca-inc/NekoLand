@@ -73,13 +73,45 @@ jobs:
           export PKG_CONFIG_ALLOW_CROSS=1
           cargo build --release --target x86_64-pc-windows-gnu
 
-      - name: Create Bundle
+      # Assemble un bundle autonome : l'exe + TOUTES les DLL GTK4/GLib dont il
+      # dépend (sinon « libcairo-2.dll introuvable » etc. sur une machine sans
+      # MSYS2), plus le runtime GTK (loaders gdk-pixbuf, schémas GLib, icônes).
+      # La structure prefix (exe + DLL à la racine, lib/ et share/ en frères)
+      # permet à GLib/GTK de retrouver ses données relativement à l'exe sur Windows.
+      - name: Assemble Bundle (exe + GTK runtime)
         if: steps.build.outcome == 'success'
+        shell: msys2 {0}
         run: |
-          mkdir bundle-windows
-          cp -r assets bundle-windows/assets
+          set -e
+          mkdir -p bundle-windows/assets
+          cp -r assets/* bundle-windows/assets/
           cp target/x86_64-pc-windows-gnu/release/nekoland.exe bundle-windows/
-          Compress-Archive -Path bundle-windows/* -DestinationPath nekoland-windows.zip
+
+          # DLL mingw64 dont dépend l'exe (résolution transitive via ldd).
+          ldd bundle-windows/nekoland.exe | grep -i '/mingw64/bin/' | awk '{print $3}' | sort -u \
+            | while read -r dll; do cp -u "$dll" bundle-windows/; done
+
+          # Loaders gdk-pixbuf (chargement des PNG des sprites) + cache en chemins relatifs.
+          mkdir -p bundle-windows/lib/gdk-pixbuf-2.0/2.10.0
+          cp -r /mingw64/lib/gdk-pixbuf-2.0/2.10.0/loaders bundle-windows/lib/gdk-pixbuf-2.0/2.10.0/
+          ( cd bundle-windows/lib/gdk-pixbuf-2.0/2.10.0 && gdk-pixbuf-query-loaders loaders/*.dll > loaders.cache )
+          # Les loaders peuvent eux-mêmes dépendre de DLL (libpng, jpeg…) : on les ajoute.
+          for l in bundle-windows/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll; do
+            ldd "$l" | grep -i '/mingw64/bin/' | awk '{print $3}'; done | sort -u \
+            | while read -r dll; do cp -u "$dll" bundle-windows/; done
+
+          # Schémas GLib (compilés).
+          mkdir -p bundle-windows/share/glib-2.0/schemas
+          glib-compile-schemas /mingw64/share/glib-2.0/schemas --targetdir bundle-windows/share/glib-2.0/schemas
+
+          # Icônes (thème par défaut GTK).
+          mkdir -p bundle-windows/share/icons
+          cp -r /mingw64/share/icons/Adwaita bundle-windows/share/icons/ || true
+          cp -r /mingw64/share/icons/hicolor bundle-windows/share/icons/ || true
+
+      - name: Zip Bundle
+        if: steps.build.outcome == 'success'
+        run: Compress-Archive -Path bundle-windows/* -DestinationPath nekoland-windows.zip
 
       - name: Upload Artifact
         if: steps.build.outcome == 'success'
