@@ -94,6 +94,17 @@ les assets dans `~/.local/share/neko-desktop/assets` (résolus automatiquement p
 exec-once = ~/.local/bin/neko-desktop
 ```
 
+## Debug
+
+```sh
+NEKO_DEBUG=1 cargo run
+```
+Affiche au démarrage les chemins (assets, config), les réglages effectifs, la
+disposition des moniteurs (union), le catalogue (skins/pelotes) et la présence de
+`hyprctl` ; puis, toutes les ~2 s, l'état courant : mode, comportement effectif
+(`errance`/`dock`/`pelote`/`sommeil`/`twitch`), position du chat, cible, et la
+fenêtre focus (classe, titre, géométrie, durée de focus).
+
 ## Compatibilité
 
 | Compositeur | État |

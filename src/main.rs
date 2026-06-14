@@ -52,10 +52,49 @@ fn build_ui(app: &Application) {
     let display = gtk::gdk::Display::default().expect("aucun display GDK");
     let cfg = config::load();
     let assets = assets_dir();
+    let debug = std::env::var("NEKO_DEBUG").is_ok();
 
     // ---- Espace global = union de tous les moniteurs ----
     let monitors = monitors(&display);
     let (orig_x, orig_y, total_w, total_h) = union_bounds(&monitors);
+
+    if debug {
+        eprintln!("[neko][debug] ── démarrage ──");
+        eprintln!("[neko][debug] version       {}", env!("CARGO_PKG_VERSION"));
+        eprintln!("[neko][debug] assets        {}", assets.display());
+        eprintln!("[neko][debug] config        {}", config::config_path().display());
+        eprintln!(
+            "[neko][debug] réglages      skin={} toy={} scale={} mode={} twitch={}",
+            cfg.skin,
+            cfg.toy,
+            cfg.scale,
+            cfg.mode,
+            if cfg.twitch_channel.is_empty() { "-" } else { &cfg.twitch_channel },
+        );
+        eprintln!(
+            "[neko][debug] union         origine=({orig_x},{orig_y}) {total_w}×{total_h}",
+        );
+        for (i, m) in monitors.iter().enumerate() {
+            let g = m.geometry();
+            eprintln!(
+                "[neko][debug] moniteur {i}    {}×{} @ ({},{})",
+                g.width(), g.height(), g.x(), g.y(),
+            );
+        }
+        eprintln!(
+            "[neko][debug] catalogue     {} skins, {} pelotes",
+            list_pngs(&assets.join("pets")).len(),
+            list_pngs(&assets.join("toys")).len(),
+        );
+        eprintln!(
+            "[neko][debug] hyprctl       {}",
+            if std::process::Command::new("hyprctl").arg("version").output().is_ok() {
+                "présent (mode dock possible)"
+            } else {
+                "absent (pas de mode dock)"
+            },
+        );
+    }
 
     // ---- Fond de fenêtre transparent (sinon l'overlay masque tout) ----
     let provider = gtk::CssProvider::new();
@@ -193,6 +232,7 @@ fn build_ui(app: &Application) {
         let mut current_skin = cfg.skin.clone();
         let mut json_mtime = file_mtime(&pets_json(&assets, &current_skin));
         let mut wander = (total_w / 2.0, total_h / 2.0, 0.0_f64); // (x, y, compteur)
+        let mut dbg_tick: u64 = 0;
         glib::timeout_add_local(Duration::from_millis(100), move || {
             // Reload à chaud si le tray a changé un réglage.
             let (version, skin, toyname, sc, cur_mode, open_config) = {
@@ -244,9 +284,12 @@ fn build_ui(app: &Application) {
             let (max_x, max_y) = ((total_w - size).max(0.0), (total_h - size).max(0.0));
 
             // Cible à poursuivre. Twitch Heat est prioritaire dès qu'un clic arrive.
+            let behavior;
             let target = if twitch_active {
+                behavior = "twitch";
                 (twx, twy)
             } else if mode == "Sommeil" {
+                behavior = "sommeil";
                 (px, py) // reste sur place → la pose « arrivée » joue le sommeil
             } else if mode == "Autonome" {
                 // Si une fenêtre est focus depuis assez longtemps → mode « dock » :
@@ -256,6 +299,7 @@ fn build_ui(app: &Application) {
                     (f.valid && f.since.elapsed() >= DOCK_DELAY).then(|| (f.x, f.y, f.w, f.h))
                 };
                 if let Some((wx, wy, ww, wh)) = docked {
+                    behavior = "dock";
                     let dock_y = ((wy + wh) - orig_y as f64).clamp(0.0, max_y);
                     let left = (wx - orig_x as f64).clamp(0.0, max_x);
                     let right = (wx + ww - orig_x as f64 - size).clamp(left, max_x);
@@ -267,6 +311,7 @@ fn build_ui(app: &Application) {
                     }
                     (wander.0.clamp(left, right), dock_y)
                 } else {
+                    behavior = "errance";
                     // Errance libre : nouvelle cible aléatoire de temps en temps.
                     wander.2 -= 1.0;
                     if wander.2 < 0.0 {
@@ -277,6 +322,7 @@ fn build_ui(app: &Application) {
                     (wander.0, wander.1)
                 }
             } else {
+                behavior = "pelote";
                 // Mode « Pelote ».
                 let mut t = toy.borrow_mut();
                 if t.active {
@@ -297,6 +343,34 @@ fn build_ui(app: &Application) {
             for area in &areas {
                 area.queue_draw();
             }
+
+            // État périodique (~toutes les 2 s) en mode debug.
+            if debug {
+                dbg_tick += 1;
+                if dbg_tick % 20 == 0 {
+                    let (cx, cy) = {
+                        let p = pet.borrow();
+                        (p.x, p.y)
+                    };
+                    let f = focus.lock().unwrap();
+                    let win = if f.valid {
+                        format!(
+                            "{} « {} » {}×{}@({},{}) focus {}s",
+                            f.class,
+                            f.title.chars().take(30).collect::<String>(),
+                            f.w as i32, f.h as i32, f.x as i32, f.y as i32,
+                            f.since.elapsed().as_secs(),
+                        )
+                    } else {
+                        "aucune".to_string()
+                    };
+                    eprintln!(
+                        "[neko][debug] mode={mode} comportement={behavior} pos=({cx:.0},{cy:.0}) cible=({:.0},{:.0}) | fenêtre: {win}",
+                        target.0, target.1,
+                    );
+                }
+            }
+
             glib::ControlFlow::Continue
         });
     }

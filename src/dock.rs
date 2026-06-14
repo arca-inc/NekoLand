@@ -13,6 +13,8 @@ use serde_json::Value;
 /// État de la fenêtre focus, en coordonnées globales du compositeur.
 pub struct Focus {
     pub addr: String,
+    pub class: String,
+    pub title: String,
     pub x: f64,
     pub y: f64,
     pub w: f64,
@@ -26,6 +28,8 @@ impl Focus {
     fn empty() -> Self {
         Focus {
             addr: String::new(),
+            class: String::new(),
+            title: String::new(),
             x: 0.0,
             y: 0.0,
             w: 0.0,
@@ -45,15 +49,17 @@ pub fn spawn() -> Arc<Mutex<Focus>> {
         {
             let mut f = out.lock().unwrap();
             match info {
-                Some((addr, x, y, w, h)) => {
-                    if addr != f.addr {
+                Some(w) => {
+                    if w.addr != f.addr {
                         f.since = Instant::now();
-                        f.addr = addr;
+                        f.addr = w.addr;
                     }
-                    f.x = x;
-                    f.y = y;
-                    f.w = w;
-                    f.h = h;
+                    f.class = w.class;
+                    f.title = w.title;
+                    f.x = w.x;
+                    f.y = w.y;
+                    f.w = w.w;
+                    f.h = w.h;
                     f.valid = true;
                 }
                 None => {
@@ -67,8 +73,19 @@ pub fn spawn() -> Arc<Mutex<Focus>> {
     shared
 }
 
+/// Données brutes d'une fenêtre interrogée.
+struct Win {
+    addr: String,
+    class: String,
+    title: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
 /// Interroge Hyprland. `None` si pas de fenêtre focus ou hyprctl indisponible.
-fn query() -> Option<(String, f64, f64, f64, f64)> {
+fn query() -> Option<Win> {
     let out = std::process::Command::new("hyprctl")
         .args(["activewindow", "-j"])
         .output()
@@ -80,11 +97,13 @@ fn query() -> Option<(String, f64, f64, f64, f64)> {
     }
     let at = v.get("at")?.as_array()?;
     let size = v.get("size")?.as_array()?;
-    Some((
+    Some(Win {
         addr,
-        at.first()?.as_f64()?,
-        at.get(1)?.as_f64()?,
-        size.first()?.as_f64()?,
-        size.get(1)?.as_f64()?,
-    ))
+        class: v.get("class").and_then(Value::as_str).unwrap_or("").to_string(),
+        title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+        x: at.first()?.as_f64()?,
+        y: at.get(1)?.as_f64()?,
+        w: size.first()?.as_f64()?,
+        h: size.get(1)?.as_f64()?,
+    })
 }
