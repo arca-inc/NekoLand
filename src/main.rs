@@ -16,6 +16,10 @@ pub mod pet;
 pub mod toy;
 #[cfg(target_os = "linux")]
 mod tray;
+#[cfg(not(target_os = "linux"))]
+mod tray_sys;
+#[cfg(not(target_os = "linux"))]
+use tray_sys as tray;
 mod twitch;
 mod util;
 
@@ -155,7 +159,6 @@ fn build_ui(app: &Application) {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    #[cfg(target_os = "linux")]
     tray::spawn(
         pet_pix.borrow().as_ref(),
         list_pngs(&assets.join("pets")),
@@ -218,13 +221,11 @@ fn build_ui(app: &Application) {
                 
                 #[cfg(target_os = "macos")]
                 {
-                    use gdk4_macos::MacOSSurface;
-                    use objc2::{msg_send, ClassType};
-                    use objc2::rc::Id;
-                    use objc2_app_kit::NSWindow;
+                    use gdk4_macos::MacosSurface;
+                    use objc2::msg_send;
                     
                     if let Some(surface) = w.surface() {
-                        if let Ok(mac_surface) = surface.downcast::<MacOSSurface>() {
+                        if let Ok(mac_surface) = surface.downcast::<MacosSurface>() {
                             let nswindow_ptr = mac_surface.nswindow();
                             unsafe {
                                 let nswindow: *mut objc2::ffi::objc_object = nswindow_ptr as _;

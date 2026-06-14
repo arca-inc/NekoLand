@@ -17,6 +17,9 @@ gtk4-layer-shell = "0.4"
 # Tray icon (StatusNotifierItem) — thread dbus autonome, pas besoin de tokio
 ksni = "0.2"
 
+[target.'cfg(any(target_os="windows", target_os="macos"))'.dependencies]
+tray-icon = "0.14.3"
+
 [dependencies]
 # GTK4 + layer-shell : l'overlay Wayland always-on-top, click-through
 gtk = { version = "0.9", package = "gtk4", features = ["v4_10"] }
