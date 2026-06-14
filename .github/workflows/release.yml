@@ -149,7 +149,9 @@ jobs:
             arch -x86_64 /bin/bash -c \
               "NONINTERACTIVE=1 $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           fi
-          arch -x86_64 /usr/local/bin/brew install gtk4 pkgconf libffi
+          # libffi/zlib/bzip2 : libs « système » que le bottle gtk4 ne tire pas
+          # toujours en keg sous Rosetta ; on les installe pour avoir leurs .pc.
+          arch -x86_64 /usr/local/bin/brew install gtk4 pkgconf libffi zlib bzip2
 
       - name: Build arm64
         id: build
@@ -158,13 +160,11 @@ jobs:
       - name: Build x86_64
         run: |
           # pkg-config isolé sur le préfixe x86_64 (/usr/local) pour ne pas piocher
-          # une lib arm64 (/opt/homebrew). `find -L` suit les symlinks opt/* → Cellar.
-          # On AJOUTE le pkgconfig du SDK macOS : certaines libs (zlib…) sont fournies
-          # par le système, leur .pc n'est pas dans Homebrew mais dans le SDK.
+          # une lib arm64 (/opt/homebrew). `find -L` suit les symlinks opt/* → Cellar,
+          # et capte zlib/bzip2/libffi installés à l'étape précédente.
           XPC="$(find -L /usr/local -type d -name pkgconfig 2>/dev/null | tr '\n' ':')"
-          SDK="$(xcrun --show-sdk-path)/usr/lib/pkgconfig"
-          echo "SDK pkgconfig: $SDK"; ls "$SDK" 2>/dev/null | tr '\n' ' '; echo
-          PKG_CONFIG_LIBDIR="$XPC:$SDK" PKG_CONFIG_ALLOW_CROSS=1 \
+          echo "zlib.pc : $(find -L /usr/local -name 'zlib.pc' 2>/dev/null | head -1 || echo MANQUANT)"
+          PKG_CONFIG_LIBDIR="$XPC" PKG_CONFIG_ALLOW_CROSS=1 \
             cargo build --release --target x86_64-apple-darwin
 
       - name: Create universal bundle
