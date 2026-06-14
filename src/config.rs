@@ -73,7 +73,10 @@ pub struct Control {
     pub scale: f64,
     pub mode: String,
     pub twitch_channel: String,
+    /// Bumpé à chaque changement de réglage (déclenche le reload côté GTK).
     pub version: u64,
+    /// Bumpé quand le tray demande l'ouverture de l'éditeur de sprites.
+    pub open_config: u64,
 }
 
 impl Control {
@@ -85,6 +88,7 @@ impl Control {
             mode: c.mode.clone(),
             twitch_channel: c.twitch_channel.clone(),
             version: 0,
+            open_config: 0,
         }
     }
 

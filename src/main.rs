@@ -9,6 +9,7 @@
 //!   - Réglages persistants (config.json) ; icône de barre système (ksni).
 
 mod config;
+mod mapper;
 mod pet;
 mod toy;
 mod tray;
@@ -90,17 +91,12 @@ fn build_ui(app: &Application) {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let mapper = std::fs::canonicalize(mapper_path())
-        .unwrap_or_else(|_| mapper_path())
-        .to_string_lossy()
-        .into_owned();
     tray::spawn(
         pet_pix.borrow().as_ref(),
         list_pngs(&assets.join("pets")),
         list_pngs(&assets.join("toys")),
         scales,
         modes,
-        mapper,
         control.clone(),
     );
 
@@ -174,6 +170,7 @@ fn build_ui(app: &Application) {
 
     // ---- Tick d'animation ~10 fps (logique de jeu + redessine les overlays) ----
     {
+        let app = app.clone();
         let pet = pet.clone();
         let toy = toy.clone();
         let pet_pix = pet_pix.clone();
@@ -184,16 +181,23 @@ fn build_ui(app: &Application) {
         let assets = assets.clone();
         let mut rest: i32 = 0; // ticks de repos restants après une prise
         let mut seen_version: u64 = 0;
+        let mut seen_open: u64 = 0;
         let mut mode = cfg.mode.clone();
         let mut current_skin = cfg.skin.clone();
         let mut json_mtime = file_mtime(&pets_json(&assets, &current_skin));
         let mut wander = (total_w / 2.0, total_h / 2.0, 0.0_f64); // (x, y, compteur)
         glib::timeout_add_local(Duration::from_millis(100), move || {
             // Reload à chaud si le tray a changé un réglage.
-            let (version, skin, toyname, sc, cur_mode) = {
+            let (version, skin, toyname, sc, cur_mode, open_config) = {
                 let c = control.lock().unwrap();
-                (c.version, c.skin.clone(), c.toy.clone(), c.scale, c.mode.clone())
+                (c.version, c.skin.clone(), c.toy.clone(), c.scale, c.mode.clone(), c.open_config)
             };
+
+            // Ouverture de l'éditeur de sprites (demandée depuis le tray).
+            if open_config != seen_open {
+                seen_open = open_config;
+                mapper::open(&app, &assets, &current_skin, pet_pix.borrow().clone());
+            }
             if version != seen_version {
                 seen_version = version;
                 *pet_pix.borrow_mut() = load_sprite(&pets_png(&assets, &skin));
@@ -337,32 +341,6 @@ fn toys_png(assets: &Path, toy: &str) -> PathBuf {
 /// Date de modification d'un fichier (pour le reload à chaud du mapping).
 fn file_mtime(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
-}
-
-/// Chemin de l'outil de mapping `sprite_mapper.html` (mêmes emplacements que les
-/// assets : `$NEKO_TOOLS`, `./tools`, à côté de l'exe, XDG, `/usr/share`).
-fn mapper_path() -> PathBuf {
-    const REL: &str = "tools/sprite_mapper.html";
-    if let Ok(d) = std::env::var("NEKO_TOOLS") {
-        return PathBuf::from(d).join("sprite_mapper.html");
-    }
-    let mut candidates: Vec<PathBuf> = vec![PathBuf::from(REL)];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join(REL));
-            if let Some(up) = dir.parent().and_then(Path::parent) {
-                candidates.push(up.join(REL));
-            }
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        candidates.push(PathBuf::from(home).join(".local/share/neko-desktop").join(REL));
-    }
-    candidates.push(PathBuf::from("/usr/share/neko-desktop").join(REL));
-    candidates
-        .into_iter()
-        .find(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from(REL))
 }
 
 /// Charge le mapping d'un skin depuis `<assets>/pets/<skin>.json`. Retombe sur le

@@ -41,12 +41,15 @@ Format : grille 8×6, tuiles 32×32 avec **1 px de séparation** (origine d'une
 tuile = `(col*33, row*33)`). Le fond plein est retiré au chargement en rendant
 transparente la couleur du pixel (0,0) (`Pixbuf::add_alpha`).
 
-Le mapping cellule → animation se fait via **`tools/sprite_mapper.html`**,
-accessible directement depuis le tray (**« Configurer les sprites… »**, pré-réglé
-sur le skin courant). Clique pour assigner les frames, puis **« Enregistrer dans
-assets/pets »** : le `.json` est écrit sur place (File System Access API) et l'app
+Le mapping cellule → animation se fait via l'**éditeur natif GTK4** (`src/mapper.rs`),
+ouvert plein écran depuis le tray (**« Configurer les sprites… »**, sur le skin
+courant). On choisit une animation, on clique les cellules dans l'ordre des
+frames, puis **« Enregistrer »** écrit `assets/pets/<skin>.json` et l'app
 **recharge le mapping à chaud** (surveillance du mtime). Pour ajouter un skin :
-dépose son `*.png` dans `assets/pets/` et mappe-le.
+dépose son `*.png` dans `assets/pets/` (il apparaît dans le menu **Chat**).
+
+> Un éditeur web autonome subsiste dans `tools/sprite_mapper.html` (non relié à
+> l'app), si tu préfères mapper dans un navigateur.
 
 ## Dépendances système (Gentoo)
 
