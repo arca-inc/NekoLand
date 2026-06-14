@@ -1,0 +1,80 @@
+name: Release Bundles
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libgtk4-layer-shell-dev libpango1.0-dev libcairo2-dev libglib2.0-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Create Bundle
+        run: |
+          mkdir -p bundle-linux/assets
+          cp -r assets/* bundle-linux/assets/
+          cp target/release/nekoland bundle-linux/
+          cp install.sh bundle-linux/
+          tar -czvf nekoland-linux.tar.gz -C bundle-linux .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nekoland-linux
+          path: nekoland-linux.tar.gz
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust (GNU)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Setup MSYS2 and GTK4
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gtk4 mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc
+
+      # The build will likely fail here because gtk4-layer-shell relies on Wayland headers.
+      # Setting continue-on-error to true so it doesn't break the whole pipeline while Windows support is a WIP.
+      - name: Build
+        shell: msys2 {0}
+        run: cargo build --release --target x86_64-pc-windows-gnu
+        continue-on-error: true
+
+      - name: Create Bundle
+        if: success()
+        run: |
+          mkdir bundle-windows
+          cp -r assets bundle-windows/assets
+          cp target/x86_64-pc-windows-gnu/release/nekoland.exe bundle-windows/
+          Compress-Archive -Path bundle-windows/* -DestinationPath nekoland-windows.zip
+
+      - name: Upload Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nekoland-windows
+          path: nekoland-windows.zip
