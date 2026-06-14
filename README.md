@@ -66,6 +66,21 @@ NEKO_TWITCH_CHANNEL=ton_user_id cargo run
 ```
 (`ton_user_id` = l'ID numérique de la chaîne Twitch ; voir https://heat.j38.net)
 
+## Installation & autostart
+
+```sh
+./install.sh
+```
+Compile en release, installe le binaire dans `~/.local/bin/neko-desktop`, copie
+les assets dans `~/.local/share/neko-desktop/assets` (résolus automatiquement par
+`assets_dir()`), et crée les entrées `.desktop` (applications + autostart XDG).
+
+**Hyprland** ne lit pas l'autostart XDG par défaut — ajoute plutôt à
+`~/.config/hypr/hyprland.conf` :
+```
+exec-once = ~/.local/bin/neko-desktop
+```
+
 ## Compatibilité
 
 | Compositeur | État |
