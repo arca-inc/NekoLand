@@ -8,6 +8,8 @@
 //!   - Le chat poursuit une pelote (toy) ; clics Twitch Heat prioritaires.
 //!   - Réglages persistants (config.json) ; icône de barre système (ksni).
 
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 pub mod config;
 mod dock;
 pub mod i18n;
