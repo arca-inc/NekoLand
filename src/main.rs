@@ -77,6 +77,8 @@ struct Dbg {
 fn main() -> glib::ExitCode {
     // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
     std::env::set_var("GSK_RENDERER", "cairo");
+    // Force la désactivation du rendu matériel GL sous GDK (évite les conflits de pilotes sur les fenêtres transparentes)
+    std::env::set_var("GDK_DEBUG", "gl-disable");
 
     let app = Application::builder()
         .application_id(APP_ID)
