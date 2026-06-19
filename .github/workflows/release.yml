@@ -132,6 +132,7 @@ jobs:
   # DEUX cibles puis on fusionne (lipo) en un binaire universel x86_64+arm64.
   build-macos:
     name: Build macOS (universal)
+    if: false
     runs-on: macos-14
     timeout-minutes: 60
     env:
