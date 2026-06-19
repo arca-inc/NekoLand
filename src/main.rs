@@ -78,7 +78,10 @@ fn main() -> glib::ExitCode {
     // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
     std::env::set_var("GSK_RENDERER", "cairo");
 
-    let app = Application::builder().application_id(APP_ID).build();
+    let app = Application::builder()
+        .application_id(APP_ID)
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
+        .build();
     app.connect_activate(build_ui);
     app.run()
 }
@@ -220,14 +223,21 @@ fn build_ui(app: &Application) {
         window.add_css_class("transparent-overlay");
         #[cfg(target_os = "linux")]
         {
-            window.init_layer_shell();
-            window.set_layer(Layer::Overlay);
-            window.set_monitor(monitor);
-            for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
-                window.set_anchor(edge, true);
+            if gtk4_layer_shell::is_supported() {
+                window.init_layer_shell();
+                window.set_layer(Layer::Overlay);
+                window.set_monitor(monitor);
+                for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
+                    window.set_anchor(edge, true);
+                }
+                window.set_exclusive_zone(-1);
+                window.set_keyboard_mode(KeyboardMode::None);
+            } else {
+                // Fallback si layer-shell n'est pas supporté (ex: GNOME Wayland ou X11)
+                window.set_decorated(false);
+                let geo = monitor.geometry();
+                window.set_default_size(geo.width(), geo.height());
             }
-            window.set_exclusive_zone(-1);
-            window.set_keyboard_mode(KeyboardMode::None);
         }
         #[cfg(not(target_os = "linux"))]
         {
