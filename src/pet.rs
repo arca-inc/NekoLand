@@ -129,6 +129,20 @@ impl Pet {
         self.current
     }
 
+    /// Vrai si le chat dort profondément (sleep_counter > 20).
+    pub fn is_sleeping(&self) -> bool {
+        self.sleep_counter > 20
+    }
+
+    /// Réveille le chat en sursaut : remet le compteur à zéro → séquence
+    /// alert → scratchSelf → tired → sleeping recommence depuis le début.
+    /// N'a aucun effet si le chat est déjà éveillé ou en mouvement.
+    pub fn startle(&mut self) {
+        if self.sleep_counter > 10 {
+            self.sleep_counter = 0;
+        }
+    }
+
     /// Frame courante en **pixels** dans le sprite-sheet (coin haut-gauche de la
     /// tuile 32×32 à blitter).
     pub fn current_frame(&self) -> (i32, i32) {

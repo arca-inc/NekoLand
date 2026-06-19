@@ -52,6 +52,16 @@ const DOCK_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
 /// Délai sans clic Twitch après lequel le chat reprend son comportement normal.
 const TWITCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Routine en cours en mode Autonome — pilote la sélection de cible.
+enum Routine {
+    /// Errance aléatoire normale : wander (x, y, compteur) est maître.
+    Free,
+    /// Zoomies : enchaîne plusieurs cibles lointaines à vive allure.
+    Zoomies { targets: Vec<(f64, f64)>, idx: usize },
+    /// Tour de périmètre : le chat fait le tour du bord de la fenêtre focalisée.
+    DockPerimeter { waypoints: Vec<(f64, f64)>, idx: usize },
+}
+
 /// État pour le debug visuel (overlay), partagé tick → fonctions de dessin.
 struct Dbg {
     on: bool,
@@ -394,6 +404,7 @@ fn build_ui(app: &Application) {
         let mut current_skin = cfg.skin.clone();
         let mut json_mtime = file_mtime(&pets_json(&assets, &current_skin));
         let mut wander = (total_w / 2.0, total_h / 2.0, 0.0_f64); // (x, y, compteur)
+        let mut routine = Routine::Free; // routine autonome courante
         let mut dbg_tick: u64 = 0;
         let mut last_saved = cfg.clone(); // dernière config écrite sur disque
         glib::timeout_add_local(Duration::from_millis(100), move || {
@@ -490,34 +501,116 @@ fn build_ui(app: &Application) {
                 }
             } else if mode == "Autonome" {
                 // Si une fenêtre est focus depuis assez longtemps → mode « dock » :
-                // le chat se promène sous son bord bas, sans monter ni descendre.
+                // le chat se promène sous son bord bas (ou fait le tour de la fenêtre).
                 let docked = {
                     let f = focus.lock().unwrap();
                     (f.valid && f.since.elapsed() >= DOCK_DELAY).then(|| (f.x, f.y, f.w, f.h))
                 };
+
+                // Cohérence de routine : on réinitialise si le sous-mode a changé.
+                match &routine {
+                    Routine::DockPerimeter { .. } if docked.is_none() => routine = Routine::Free,
+                    Routine::Zoomies { .. } if docked.is_some() => routine = Routine::Free,
+                    _ => {}
+                }
+
                 if let Some((wx, wy, ww, wh)) = docked {
-                    behavior = "dock";
+                    // ── MODE DOCK ──────────────────────────────────────────────────────────
                     let dock_y = ((wy + wh) - size - orig_y as f64).clamp(0.0, max_y);
-                    pet.borrow_mut().y = dock_y; // bloque la hauteur
-                    // Bornes du centre du chat sous la fenêtre.
-                    let cmin = (wx - orig_x as f64 + half).clamp(half, total_w - half);
-                    let cmax = (wx + ww - orig_x as f64 - half).clamp(cmin, total_w - half);
-                    wander.2 -= 1.0;
-                    if wander.2 < 0.0 || wander.0 < cmin || wander.0 > cmax {
-                        wander.0 = cmin + util::rand_unit() * (cmax - cmin).max(1.0);
-                        wander.2 = 60.0 + util::rand_unit() * 100.0;
-                    }
-                    (wander.0.clamp(cmin, cmax), dock_y + half)
+                    let top_y  = (wy - orig_y as f64 + half).clamp(half, total_h - half);
+                    let left_x = (wx - orig_x as f64 + half).clamp(half, total_w - half);
+                    let right_x = (wx + ww - orig_x as f64 - half).clamp(left_x, total_w - half);
+
+                    let mut next_routine: Option<Routine> = None;
+                    let target = match &mut routine {
+                        Routine::DockPerimeter { waypoints, idx } => {
+                            // Tour complet : le chat se déplace librement le long du bord.
+                            behavior = "périmètre";
+                            let wp = waypoints[*idx];
+                            let dist = ((px + half - wp.0).powi(2)
+                                + (py + half - wp.1).powi(2)).sqrt();
+                            if dist <= 40.0 {
+                                *idx += 1;
+                                if *idx >= waypoints.len() {
+                                    // Tour terminé → retour à l'errance dock normale
+                                    next_routine = Some(Routine::Free);
+                                    wander.0 = left_x + util::rand_unit() * (right_x - left_x).max(1.0);
+                                    wander.2 = 60.0 + util::rand_unit() * 100.0;
+                                }
+                            }
+                            wp
+                        }
+                        _ => {
+                            // Errance normale sous la fenêtre, y bloqué.
+                            behavior = "dock";
+                            pet.borrow_mut().y = dock_y;
+                            wander.2 -= 1.0;
+                            if wander.2 < 0.0 || wander.0 < left_x || wander.0 > right_x {
+                                if util::rand_unit() < 0.15 {
+                                    // 15% → tour du périmètre de la fenêtre
+                                    let waypoints = vec![
+                                        (right_x, dock_y + half), // coin bas-droite
+                                        (right_x, top_y),          // coin haut-droite
+                                        (left_x,  top_y),          // coin haut-gauche
+                                        (left_x,  dock_y + half),  // coin bas-gauche
+                                    ];
+                                    next_routine = Some(Routine::DockPerimeter { waypoints, idx: 0 });
+                                } else {
+                                    wander.0 = left_x + util::rand_unit() * (right_x - left_x).max(1.0);
+                                    wander.2 = 60.0 + util::rand_unit() * 100.0;
+                                }
+                            }
+                            (wander.0.clamp(left_x, right_x), dock_y + half)
+                        }
+                    };
+                    if let Some(r) = next_routine { routine = r; }
+                    target
                 } else {
-                    behavior = "errance";
-                    // Errance libre : nouvelle cible (centre) aléatoire de temps en temps.
-                    wander.2 -= 1.0;
-                    if wander.2 < 0.0 {
-                        wander.0 = half + util::rand_unit() * max_x;
-                        wander.1 = half + util::rand_unit() * max_y;
-                        wander.2 = 80.0 + util::rand_unit() * 120.0;
-                    }
-                    (wander.0, wander.1)
+                    // ── MODE ERRANCE LIBRE ─────────────────────────────────────────────────
+                    let mut next_routine: Option<Routine> = None;
+                    let target = match &mut routine {
+                        Routine::Zoomies { targets, idx } => {
+                            // Sprint vers les cibles en rafale.
+                            behavior = "zoomies";
+                            let t = targets[*idx];
+                            let dist = ((px + half - t.0).powi(2)
+                                + (py + half - t.1).powi(2)).sqrt();
+                            if dist <= 32.0 {
+                                *idx += 1;
+                                if *idx >= targets.len() {
+                                    // Toutes les cibles atteintes → retour errance normale
+                                    next_routine = Some(Routine::Free);
+                                    wander.0 = half + util::rand_unit() * max_x;
+                                    wander.1 = half + util::rand_unit() * max_y;
+                                    wander.2 = 80.0 + util::rand_unit() * 120.0;
+                                }
+                            }
+                            t
+                        }
+                        _ => {
+                            // Errance aléatoire normale.
+                            behavior = "errance";
+                            wander.2 -= 1.0;
+                            if wander.2 < 0.0 {
+                                if util::rand_unit() < 0.10 {
+                                    // 10% → zoomies : 3-5 cibles lointaines en rafale
+                                    let n = 3 + (util::rand_unit() * 3.0) as usize;
+                                    let targets: Vec<(f64, f64)> = (0..n)
+                                        .map(|_| (half + util::rand_unit() * max_x,
+                                                  half + util::rand_unit() * max_y))
+                                        .collect();
+                                    next_routine = Some(Routine::Zoomies { targets, idx: 0 });
+                                } else {
+                                    wander.0 = half + util::rand_unit() * max_x;
+                                    wander.1 = half + util::rand_unit() * max_y;
+                                    wander.2 = 80.0 + util::rand_unit() * 120.0;
+                                }
+                            }
+                            (wander.0, wander.1)
+                        }
+                    };
+                    if let Some(r) = next_routine { routine = r; }
+                    target
                 }
             } else {
                 behavior = "pelote";
@@ -538,6 +631,21 @@ fn build_ui(app: &Application) {
             };
 
             pet.borrow_mut().update(target, State::Chase);
+
+            // ── Réveil en sursaut ────────────────────────────────────────────────────
+            // Si le chat dort et que le curseur passe à moins de 80 px → alerte !
+            if (mode == "Autonome" || mode == "Sommeil") && pet.borrow().is_sleeping() {
+                let c = cursor.lock().unwrap();
+                if c.valid {
+                    let cx = c.x - orig_x as f64;
+                    let cy = c.y - orig_y as f64;
+                    let dist = ((cx - (px + half)).powi(2)
+                        + (cy - (py + half)).powi(2)).sqrt();
+                    if dist < 80.0 {
+                        pet.borrow_mut().startle();
+                    }
+                }
+            }
 
             // Partage cible + comportement + compte à rebours dock pour le debug.
             if debug {
