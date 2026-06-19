@@ -84,26 +84,60 @@ struct Win {
     h: f64,
 }
 
-/// Interroge Hyprland. `None` si pas de fenêtre focus ou hyprctl indisponible.
+/// Interroge la fenêtre active. `None` si pas de fenêtre focus ou erreur.
 fn query() -> Option<Win> {
-    let out = std::process::Command::new("hyprctl")
-        .args(["activewindow", "-j"])
-        .output()
-        .ok()?;
-    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
-    let addr = v.get("address")?.as_str()?.to_string();
-    if addr.is_empty() {
-        return None;
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect};
+        use windows_sys::Win32::Foundation::HWND;
+        
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd == 0 {
+                return None;
+            }
+            let mut rect = windows_sys::Win32::Foundation::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            if GetWindowRect(hwnd, &mut rect) != 0 {
+                let w = (rect.right - rect.left) as f64;
+                let h = (rect.bottom - rect.top) as f64;
+                // Si la fenêtre a des dimensions valides (exclut le bureau ou des widgets vides)
+                if w > 0.0 && h > 0.0 {
+                    return Some(Win {
+                        addr: format!("{:x}", hwnd as usize),
+                        class: "WindowsWindow".to_string(),
+                        title: "WindowsWindow".to_string(),
+                        x: rect.left as f64,
+                        y: rect.top as f64,
+                        w,
+                        h,
+                    });
+                }
+            }
+        }
+        None
     }
-    let at = v.get("at")?.as_array()?;
-    let size = v.get("size")?.as_array()?;
-    Some(Win {
-        addr,
-        class: v.get("class").and_then(Value::as_str).unwrap_or("").to_string(),
-        title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
-        x: at.first()?.as_f64()?,
-        y: at.get(1)?.as_f64()?,
-        w: size.first()?.as_f64()?,
-        h: size.get(1)?.as_f64()?,
-    })
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let out = std::process::Command::new("hyprctl")
+            .args(["activewindow", "-j"])
+            .output()
+            .ok()?;
+        let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+        let addr = v.get("address")?.as_str()?.to_string();
+        if addr.is_empty() {
+            return None;
+        }
+        let at = v.get("at")?.as_array()?;
+        let size = v.get("size")?.as_array()?;
+        Some(Win {
+            addr,
+            class: v.get("class").and_then(Value::as_str).unwrap_or("").to_string(),
+            title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+            x: at.first()?.as_f64()?,
+            y: at.get(1)?.as_f64()?,
+            w: size.first()?.as_f64()?,
+            h: size.get(1)?.as_f64()?,
+        })
+    }
 }

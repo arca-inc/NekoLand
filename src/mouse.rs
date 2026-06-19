@@ -45,12 +45,27 @@ pub fn spawn() -> Arc<Mutex<Cursor>> {
     shared
 }
 
-/// Interroge Hyprland. `None` si hyprctl indisponible ou réponse inattendue.
+/// Interroge la position du curseur.
 fn query() -> Option<(f64, f64)> {
-    let out = std::process::Command::new("hyprctl")
-        .args(["cursorpos", "-j"])
-        .output()
-        .ok()?;
-    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
-    Some((v.get("x")?.as_f64()?, v.get("y")?.as_f64()?))
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        let mut point = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+        unsafe {
+            if GetCursorPos(&mut point) != 0 {
+                return Some((point.x as f64, point.y as f64));
+            }
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let out = std::process::Command::new("hyprctl")
+            .args(["cursorpos", "-j"])
+            .output()
+            .ok()?;
+        let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+        Some((v.get("x")?.as_f64()?, v.get("y")?.as_f64()?))
+    }
 }
