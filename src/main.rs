@@ -236,14 +236,18 @@ fn build_ui(app: &Application) {
             // On connect_realize, the window gets its GdkSurface.
             // We can then extract the native handle (HWND or NSWindow) and apply
             // the "always on top" and "pass-through" styles.
-            window.connect_realize(|w| {
+            let mx = geo.x();
+            let my = geo.y();
+            let mw = geo.width();
+            let mh = geo.height();
+            window.connect_realize(move |w| {
                 #[cfg(target_os = "windows")]
                 {
                     use gdk4_win32::Win32Surface;
                     use windows_sys::Win32::Foundation::HWND;
                     use windows_sys::Win32::UI::WindowsAndMessaging::{
                         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
-                        GWL_EXSTYLE, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+                        GWL_EXSTYLE, HWND_TOPMOST,
                         WS_EX_LAYERED, WS_EX_TRANSPARENT,
                     };
                     
@@ -253,7 +257,8 @@ fn build_ui(app: &Application) {
                             unsafe {
                                 let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
                                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize);
-                                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                                // Positionne la fenêtre à l'origine du moniteur avec la bonne taille et en premier plan
+                                SetWindowPos(hwnd, HWND_TOPMOST, mx, my, mw, mh, 0);
                             }
                         }
                     }
