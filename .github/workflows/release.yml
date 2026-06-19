@@ -91,6 +91,13 @@ jobs:
           ldd bundle-windows/nekoland.exe | grep -i '/mingw64/bin/' | awk '{print $3}' | sort -u \
             | while read -r dll; do cp -u "$dll" bundle-windows/; done
 
+          # GTK4 charge dynamiquement vulkan-1.dll via LoadLibrary sur Windows.
+          # Comme cette liaison est tardive, ldd ne la détecte pas sur nekoland.exe.
+          # On la copie donc explicitement pour éviter le crash au lancement.
+          if [ -f /mingw64/bin/vulkan-1.dll ]; then
+            cp -u /mingw64/bin/vulkan-1.dll bundle-windows/
+          fi
+
           # Loaders gdk-pixbuf (chargement des PNG des sprites) + cache en chemins relatifs.
           mkdir -p bundle-windows/lib/gdk-pixbuf-2.0/2.10.0
           cp -r /mingw64/lib/gdk-pixbuf-2.0/2.10.0/loaders bundle-windows/lib/gdk-pixbuf-2.0/2.10.0/
