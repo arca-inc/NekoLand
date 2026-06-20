@@ -4,6 +4,72 @@
 //! le mapping des sprites du skin actif.
 
 use std::cell::RefCell;
+
+// ---- Autostart Windows (registre HKCU\...\Run) --------------------------------
+#[cfg(target_os = "windows")]
+const AUTOSTART_KEY: &str = "Nekoland";
+
+#[cfg(target_os = "windows")]
+fn autostart_get() -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Registry::{
+        RegOpenKeyExW, RegQueryValueExW, RegCloseKey, HKEY_CURRENT_USER,
+        KEY_READ, REG_SZ,
+    };
+    unsafe {
+        let subkey: Vec<u16> = OsStr::new(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+        ).encode_wide().chain(Some(0)).collect();
+        let mut hkey = 0isize;
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut hkey) != 0 {
+            return false;
+        }
+        let name: Vec<u16> = OsStr::new(AUTOSTART_KEY).encode_wide().chain(Some(0)).collect();
+        let mut kind = 0u32;
+        let mut size = 0u32;
+        let exists = RegQueryValueExW(
+            hkey, name.as_ptr(), std::ptr::null_mut(), &mut kind,
+            std::ptr::null_mut(), &mut size,
+        ) == 0 && kind == REG_SZ;
+        RegCloseKey(hkey);
+        exists
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn autostart_set(enable: bool) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Registry::{
+        RegOpenKeyExW, RegSetValueExW, RegDeleteValueW, RegCloseKey,
+        HKEY_CURRENT_USER, KEY_WRITE, REG_SZ,
+    };
+    unsafe {
+        let subkey: Vec<u16> = OsStr::new(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+        ).encode_wide().chain(Some(0)).collect();
+        let mut hkey = 0isize;
+        if RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_WRITE, &mut hkey) != 0 {
+            return;
+        }
+        let name: Vec<u16> = OsStr::new(AUTOSTART_KEY).encode_wide().chain(Some(0)).collect();
+        if enable {
+            if let Ok(exe) = std::env::current_exe() {
+                let val = format!("\"{}\"", exe.display());
+                let val_w: Vec<u16> = OsStr::new(&val).encode_wide().chain(Some(0)).collect();
+                RegSetValueExW(
+                    hkey, name.as_ptr(), 0, REG_SZ,
+                    val_w.as_ptr() as *const u8,
+                    (val_w.len() * 2) as u32,
+                );
+            }
+        } else {
+            RegDeleteValueW(hkey, name.as_ptr());
+        }
+        RegCloseKey(hkey);
+    }
+}
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::path::{Path, PathBuf};
@@ -213,6 +279,14 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         .title("Neko Dashboard")
         .build();
     window.add_css_class("dashboard");
+    #[cfg(target_os = "windows")]
+    {
+        // Sur Windows : fenêtre normale avec décorations et redimensionnable
+        window.set_decorated(true);
+        window.set_resizable(true);
+        window.set_default_size(900, 650);
+    }
+    #[cfg(not(target_os = "windows"))]
     window.fullscreen();
 
     let root = GtkBox::new(Orientation::Horizontal, 0);
@@ -388,6 +462,18 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         scale_drop.set_selected(pos as u32);
     }
     sidebar.append(&scale_drop);
+
+    // -- Démarrage avec Windows (Windows uniquement) --
+    #[cfg(target_os = "windows")]
+    {
+        let autostart_check = gtk::CheckButton::with_label("Lancer au démarrage de Windows");
+        autostart_check.set_active(autostart_get());
+        autostart_check.set_margin_top(12);
+        autostart_check.connect_toggled(|btn| {
+            autostart_set(btn.is_active());
+        });
+        sidebar.append(&autostart_check);
+    }
 
     // Spacer
     let spacer = GtkBox::new(Orientation::Vertical, 0);
