@@ -8,7 +8,7 @@
 //!   - Le chat poursuit une pelote (toy) ; clics Twitch Heat prioritaires.
 //!   - Réglages persistants (config.json) ; icône de barre système (ksni).
 
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![windows_subsystem = "windows"]
 
 // GdkWin32Screen was removed in GTK4 4.15+; gdk4-win32 0.9.5 still references it.
 #[cfg(target_os = "windows")]
@@ -80,6 +80,13 @@ struct Dbg {
 }
 
 fn main() -> glib::ExitCode {
+    // En mode debug, ouvre une console Windows pour voir les logs (NEKO_DEBUG=1).
+    // Le binaire est toujours compilé sans console (#![windows_subsystem="windows"]).
+    #[cfg(target_os = "windows")]
+    if std::env::var("NEKO_DEBUG").is_ok() {
+        unsafe { windows_sys::Win32::System::Console::AllocConsole(); }
+    }
+
     // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
     std::env::set_var("GSK_RENDERER", "cairo");
 
