@@ -10,6 +10,12 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// GdkWin32Screen was removed in GTK4 4.15+; gdk4-win32 0.9.5 still references it.
+// This stub satisfies the linker without runtime impact.
+#[cfg(target_os = "windows")]
+#[no_mangle]
+pub extern "C" fn gdk_win32_screen_get_type() -> u64 { 0 }
+
 pub mod config;
 mod dock;
 pub mod i18n;
