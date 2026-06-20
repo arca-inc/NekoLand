@@ -11,7 +11,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // GdkWin32Screen was removed in GTK4 4.15+; gdk4-win32 0.9.5 still references it.
-// This stub satisfies the linker without runtime impact.
 #[cfg(target_os = "windows")]
 #[no_mangle]
 pub extern "C" fn gdk_win32_screen_get_type() -> u64 { 0 }
@@ -83,8 +82,6 @@ struct Dbg {
 fn main() -> glib::ExitCode {
     // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
     std::env::set_var("GSK_RENDERER", "cairo");
-    // Force la désactivation du rendu matériel GL sous GDK (évite les conflits de pilotes sur les fenêtres transparentes)
-    std::env::set_var("GDK_DEBUG", "gl-disable");
 
     let app = Application::builder()
         .application_id(APP_ID)
@@ -260,26 +257,49 @@ fn build_ui(app: &Application) {
             let my = geo.y();
             let mw = geo.width();
             let mh = geo.height();
-            window.connect_realize(move |w| {
+            // connect_map fire après que GTK a terminé de mapper/positionner la fenêtre.
+            // On reporte via idle_add pour appliquer les styles Win32 après que GTK
+            // a fini son propre post-map (qui réinitialiserait nos styles sinon).
+            window.connect_map(move |w| {
                 #[cfg(target_os = "windows")]
                 {
                     use gdk4_win32::Win32Surface;
                     use windows_sys::Win32::Foundation::HWND;
-                    use windows_sys::Win32::UI::WindowsAndMessaging::{
-                        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
-                        GWL_EXSTYLE, HWND_TOPMOST,
-                        WS_EX_LAYERED, WS_EX_TRANSPARENT,
-                    };
-                    
+
                     if let Some(surface) = w.surface() {
                         if let Ok(win32_surface) = surface.downcast::<Win32Surface>() {
                             let hwnd = win32_surface.handle().0 as HWND;
-                            unsafe {
-                                let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize);
-                                // Positionne la fenêtre à l'origine du moniteur avec la bonne taille et en premier plan
-                                SetWindowPos(hwnd, HWND_TOPMOST, mx, my, mw, mh, 0);
-                            }
+                            // GTK réinitialise les styles Win32 après map+idle ;
+                            // on attend 500ms pour être sûr qu'il a fini.
+                            glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(500),
+                                move || {
+                                    use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
+                                        SetLayeredWindowAttributes,
+                                        GWL_EXSTYLE, HWND_TOPMOST, LWA_ALPHA,
+                                        WS_EX_LAYERED, WS_EX_TRANSPARENT,
+                                        WS_EX_TOOLWINDOW, WS_EX_APPWINDOW,
+                                    };
+                                    unsafe {
+                                        // 1. Positionner et mettre en premier plan
+                                        SetWindowPos(hwnd, HWND_TOPMOST, mx, my, mw, mh, 0);
+                                        // 2. Appliquer les styles étendus
+                                        //    WS_EX_LAYERED  : requis pour que WS_EX_TRANSPARENT
+                                        //                     fasse passer les clics au travers
+                                        //    WS_EX_TRANSPARENT : click-through
+                                        //    WS_EX_TOOLWINDOW  : masquer de la barre des tâches
+                                        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                                        let new_style = (style
+                                            | (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW) as isize)
+                                            & !(WS_EX_APPWINDOW as isize);
+                                        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
+                                        // 3. Activer la fenêtre layered (alpha=255 = opaque au niveau
+                                        //    fenêtre, la transparence vient des pixels Cairo)
+                                        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+                                    }
+                                },
+                            );
                         }
                     }
                 }
