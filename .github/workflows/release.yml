@@ -63,8 +63,6 @@ jobs:
           msystem: MINGW64
           install: mingw-w64-x86_64-gtk4 mingw-w64-x86_64-pkgconf mingw-w64-x86_64-gcc
 
-      # The build will likely fail here because gtk4-layer-shell relies on Wayland headers.
-      # Setting continue-on-error to true so it doesn't break the whole pipeline while Windows support is a WIP.
       - name: Build
         id: build
         shell: msys2 {0}
