@@ -9,3 +9,6 @@ run_log.txt
 scratch/
 scratch2/
 test_*.rs
+neko_stderr.txt
+.config/neko-desktop/config.json
+.config/neko-desktop/config.json

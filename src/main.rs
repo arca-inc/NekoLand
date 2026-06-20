@@ -217,6 +217,28 @@ fn build_ui(app: &Application) {
         control.clone(),
     );
 
+    // ---- Fenêtre owner cachée (Windows) ----------------------------------------
+    // Une fenêtre WS_EX_TOOLWINDOW sans titre assignée comme owner de chaque overlay
+    // empêche Windows d'afficher les overlays dans la barre des tâches, même quand
+    // GTK réinitialise WS_EX_TOOLWINDOW sur les fenêtres elles-mêmes.
+    #[cfg(target_os = "windows")]
+    let taskbar_owner: windows_sys::Win32::Foundation::HWND = unsafe {
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, WS_EX_TOOLWINDOW, WS_POPUP, CW_USEDEFAULT,
+        };
+        let class: Vec<u16> = OsStr::new("Static").encode_wide().chain(Some(0)).collect();
+        CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            class.as_ptr(),
+            std::ptr::null(),
+            WS_POPUP,
+            CW_USEDEFAULT, CW_USEDEFAULT, 0, 0,
+            0, 0, 0, std::ptr::null(),
+        )
+    };
+
     // ---- Un overlay layer-shell par moniteur ----
     let mut areas = Vec::with_capacity(monitors.len());
     for monitor in &monitors {
@@ -277,25 +299,20 @@ fn build_ui(app: &Application) {
                                     use windows_sys::Win32::UI::WindowsAndMessaging::{
                                         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
                                         SetLayeredWindowAttributes,
-                                        GWL_EXSTYLE, HWND_TOPMOST, LWA_ALPHA,
-                                        WS_EX_LAYERED, WS_EX_TRANSPARENT,
-                                        WS_EX_TOOLWINDOW, WS_EX_APPWINDOW,
+                                        GWL_EXSTYLE, GWLP_HWNDPARENT, HWND_TOPMOST, LWA_ALPHA,
+                                        WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_APPWINDOW,
                                     };
                                     unsafe {
-                                        // 1. Positionner et mettre en premier plan
+                                        // Assigner l'owner caché → retire l'overlay de la barre des tâches
+                                        SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, taskbar_owner as isize);
+                                        // Positionner et mettre en premier plan
                                         SetWindowPos(hwnd, HWND_TOPMOST, mx, my, mw, mh, 0);
-                                        // 2. Appliquer les styles étendus
-                                        //    WS_EX_LAYERED  : requis pour que WS_EX_TRANSPARENT
-                                        //                     fasse passer les clics au travers
-                                        //    WS_EX_TRANSPARENT : click-through
-                                        //    WS_EX_TOOLWINDOW  : masquer de la barre des tâches
+                                        // WS_EX_LAYERED requis pour click-through via WS_EX_TRANSPARENT
                                         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
                                         let new_style = (style
-                                            | (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW) as isize)
+                                            | (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize)
                                             & !(WS_EX_APPWINDOW as isize);
                                         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
-                                        // 3. Activer la fenêtre layered (alpha=255 = opaque au niveau
-                                        //    fenêtre, la transparence vient des pixels Cairo)
                                         SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
                                     }
                                 },
