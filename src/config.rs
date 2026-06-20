@@ -32,6 +32,16 @@ impl Default for Config {
 }
 
 pub fn config_path() -> PathBuf {
+    if let Ok(d) = std::env::var("NEKO_CONFIG") {
+        return PathBuf::from(d);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Sur Windows, HOME n'est pas défini ; on utilise APPDATA à la place.
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("neko-desktop").join("config.json");
+        }
+    }
     let base = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
