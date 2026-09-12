@@ -87,19 +87,6 @@ fn main() -> glib::ExitCode {
         unsafe { windows_sys::Win32::System::Console::AllocConsole(); }
     }
 
-    // ---- DPI Per-Monitor V2 (Windows) ----------------------------------------
-    // Sans cet appel, GTK4 reçoit les dimensions en pixels LOGIQUES (divisées par
-    // le facteur d'échelle Windows). Sur un Galaxy Book 360 à 200 %, un écran
-    // 1920×1080 est vu comme 960×540 : l'overlay ne couvre que le quart de l'écran.
-    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 force GTK à travailler en pixels
-    // physiques ; SetWindowPos utilise alors les bonnes dimensions.
-    // Doit être appelé avant toute initialisation GTK/GDK.
-    #[cfg(target_os = "windows")]
-    unsafe {
-        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4 (valeur signée isize)
-        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(-4isize as _);
-    }
-
     // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
     std::env::set_var("GSK_RENDERER", "cairo");
 
@@ -291,15 +278,18 @@ fn build_ui(app: &Application) {
         {
             window.set_decorated(false);
             let geo = monitor.geometry();
+            // GTK4 sur Windows est DPI-aware : geo retourne des pixels logiques.
+            // set_default_size attend aussi des pixels logiques (GTK gère le scaling
+            // du contenu). En revanche, SetWindowPos (Win32) dans un process DPI-aware
+            // attend des pixels PHYSIQUES. On capture scale_factor pour la conversion.
+            let sf = monitor.scale_factor(); // ex. 2 à 200 % DPI
             window.set_default_size(geo.width(), geo.height());
-            
-            // On connect_realize, the window gets its GdkSurface.
-            // We can then extract the native handle (HWND or NSWindow) and apply
-            // the "always on top" and "pass-through" styles.
-            let mx = geo.x();
-            let my = geo.y();
-            let mw = geo.width();
-            let mh = geo.height();
+
+            let mx = geo.x() * sf;
+            let my = geo.y() * sf;
+            let mw = geo.width() * sf;
+            let mh = geo.height() * sf;
+
             // connect_map fire après que GTK a terminé de mapper/positionner la fenêtre.
             // On reporte via idle_add pour appliquer les styles Win32 après que GTK
             // a fini son propre post-map (qui réinitialiserait nos styles sinon).
