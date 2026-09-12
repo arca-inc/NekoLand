@@ -87,6 +87,19 @@ fn main() -> glib::ExitCode {
         unsafe { windows_sys::Win32::System::Console::AllocConsole(); }
     }
 
+    // ---- DPI Per-Monitor V2 (Windows) ----------------------------------------
+    // Sans cet appel, GTK4 reçoit les dimensions en pixels LOGIQUES (divisées par
+    // le facteur d'échelle Windows). Sur un Galaxy Book 360 à 200 %, un écran
+    // 1920×1080 est vu comme 960×540 : l'overlay ne couvre que le quart de l'écran.
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 force GTK à travailler en pixels
+    // physiques ; SetWindowPos utilise alors les bonnes dimensions.
+    // Doit être appelé avant toute initialisation GTK/GDK.
+    #[cfg(target_os = "windows")]
+    unsafe {
+        // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4 (valeur signée isize)
+        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(-4isize as _);
+    }
+
     // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
     std::env::set_var("GSK_RENDERER", "cairo");
 
@@ -97,6 +110,7 @@ fn main() -> glib::ExitCode {
     app.connect_activate(build_ui);
     app.run()
 }
+
 
 fn build_ui(app: &Application) {
     let display = gtk::gdk::Display::default().expect("aucun display GDK");

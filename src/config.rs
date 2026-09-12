@@ -116,9 +116,18 @@ impl Control {
 pub fn save(cfg: &Config) {
     let path = config_path();
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            eprintln!("[neko] impossible de créer le dossier config {:?} : {e}", dir);
+            return;
+        }
     }
-    if let Ok(json) = serde_json::to_string_pretty(cfg) {
-        let _ = std::fs::write(&path, json);
+    match serde_json::to_string_pretty(cfg) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&path, json) {
+                eprintln!("[neko] échec sauvegarde config {:?} : {e}", path);
+            }
+        }
+        Err(e) => eprintln!("[neko] échec sérialisation config : {e}"),
     }
 }
+
