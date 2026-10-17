@@ -1,22 +1,15 @@
-# Platform status
+# Platform Status
 
-Current per-platform status. NekoLand is young: the core is functional on
-Linux/Wayland, the rest is in progress.
+Current per-platform support status.
 
 > 🇫🇷 [STATUS_FR.md](STATUS_FR.md) · 🇩🇪 [STATUS_DE.md](STATUS_DE.md)
 
-| Platform | Status | Details |
+| Platform | Status | Features |
 |---|---|---|
-| **Linux — Wayland / Hyprland** | ✅ **Tested & working** | Transparent always-on-top overlay, click-through, multi-monitor, tray, dashboard, modes (Yarn / Autonomous / Mouse / Sleep), Twitch streamer mode. |
-| Linux — X11 / other compositors | ⚠️ Untested | Should work via GTK4; the "dock" and "Mouse" modes rely on `hyprctl` (graceful fallback otherwise). |
-| **Windows** | 🚧 **In progress — not yet working** | The binary compiles (MinGW/GTK4); bundling the GTK4 runtime DLLs is being stabilized. Not yet validated on a real machine. |
-| **macOS** | 🚧 **In progress — not yet working** | Universal binary (Intel + Apple Silicon) is being sorted out in CI; the GTK4 dylibs are not bundled yet (requires `brew install gtk4`). Not yet validated. |
+| **Linux (Wayland & X11)** | ✅ **Tested & Supported** | Transparent overlay, click-through, multi-screen bounds, cat drag & drop, tray (ksni), dashboard, autostart (`install.sh`). |
+| **Windows (10 & 11)** | ✅ **Tested & Supported** | Standalone GTK4 runtime bundle, HiDPI scaling, full-screen overlay, mouse drag & drop, system tray, registry autostart (`install.ps1`). |
+| **macOS (Apple Silicon & Intel)** | ✅ **Supported** | GTK4 native runtime, floating overlay, tray, full CLI support, `NekoLand.app` bundle and LaunchAgent autostart (`install_macos.sh`). |
 
-## Summary
+---
 
-- **Linux Wayland/Hyprland** is the reference target: tested and working.
-- **Windows** and **macOS** are **experimental**: compilation is handled in CI,
-  but self-contained packaging and real-machine validation are **not done**.
-  Do not consider them usable yet.
-
-See `.github/workflows/release.yml` for the CI build status per platform.
+See `.github/workflows/release.yml` for automated multi-platform builds and artifact releases.

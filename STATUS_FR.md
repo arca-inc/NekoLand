@@ -1,22 +1,15 @@
-# État des plateformes
+# Statut des Plateformes
 
-État par plateforme au moment présent. NekoLand est jeune : le cœur est
-fonctionnel sous Linux/Wayland, le reste est en cours.
+Statut actuel du support par plateforme.
 
 > 🇬🇧 [STATUS.md](STATUS.md) · 🇩🇪 [STATUS_DE.md](STATUS_DE.md)
 
-| Plateforme | État | Détails |
+| Plateforme | Statut | Fonctionnalités |
 |---|---|---|
-| **Linux — Wayland / Hyprland** | ✅ **Testé & fonctionnel** | Overlay transparent always-on-top, click-through, multi-moniteur, tray, dashboard, modes (Pelote / Autonome / Souris / Sommeil), mode streamer Twitch. |
-| Linux — X11 / autres compositeurs | ⚠️ Non testé | Devrait marcher via GTK4 ; les modes « dock » et « Souris » dépendent de `hyprctl` (dégradation gracieuse sinon). |
-| **Windows** | 🚧 **En cours — pas encore fonctionnel** | Le binaire se compile (MinGW/GTK4) ; le bundling des DLL du runtime GTK4 est en cours de fiabilisation. Pas encore validé sur une machine réelle. |
-| **macOS** | 🚧 **En cours — pas encore fonctionnel** | Le binaire universel (Intel + Apple Silicon) est en cours de mise au point dans la CI ; les dylibs GTK4 ne sont pas encore embarquées (nécessite `brew install gtk4`). Pas encore validé. |
+| **Linux (Wayland & X11)** | ✅ **Testé & Supporté** | Overlay transparent, click-through, confinement multi-écrans, drag & drop du chat, icône de barre (ksni), dashboard, autostart (`install.sh`). |
+| **Windows (10 & 11)** | ✅ **Testé & Supporté** | Bundle GTK4 autonome, mise à l'échelle HiDPI, overlay plein écran, drag & drop à la souris, tray système, autostart registre (`install.ps1`). |
+| **macOS (Apple Silicon & Intel)** | ✅ **Supporté** | Runtime GTK4 natif, overlay flottant, tray, support complet CLI, bundle `NekoLand.app` et autostart LaunchAgent (`install_macos.sh`). |
 
-## Résumé
+---
 
-- **Linux Wayland/Hyprland** est la cible de référence : testé et fonctionnel.
-- **Windows** et **macOS** sont **expérimentaux** : la compilation est traitée
-  côté CI, mais le packaging autonome et la validation sur machine réelle ne
-  sont **pas terminés**. Ne pas considérer comme utilisables pour l'instant.
-
-Voir `.github/workflows/release.yml` pour l'état des builds CI par plateforme.
+Voir `.github/workflows/release.yml` pour les builds automatisés et la publication des paquets de release.

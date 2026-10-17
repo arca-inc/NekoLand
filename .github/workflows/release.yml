@@ -71,11 +71,6 @@ jobs:
           export PKG_CONFIG_ALLOW_CROSS=1
           cargo build --release --target x86_64-pc-windows-gnu
 
-      # Assemble un bundle autonome : l'exe + TOUTES les DLL GTK4/GLib dont il
-      # dépend (sinon « libcairo-2.dll introuvable » etc. sur une machine sans
-      # MSYS2), plus le runtime GTK (loaders gdk-pixbuf, schémas GLib, icônes).
-      # La structure prefix (exe + DLL à la racine, lib/ et share/ en frères)
-      # permet à GLib/GTK de retrouver ses données relativement à l'exe sur Windows.
       - name: Assemble Bundle (exe + GTK runtime)
         if: steps.build.outcome == 'success'
         shell: msys2 {0}
@@ -84,32 +79,29 @@ jobs:
           mkdir -p bundle-windows/assets
           cp -r assets/* bundle-windows/assets/
           cp target/x86_64-pc-windows-gnu/release/nekoland.exe bundle-windows/
+          cp install.ps1 bundle-windows/
 
-          # DLL mingw64 dont dépend l'exe (résolution transitive via ldd).
+          # DLL mingw64 dont dépend l'exe (résolution transitive via ldd)
           ldd bundle-windows/nekoland.exe | grep -i '/mingw64/bin/' | awk '{print $3}' | sort -u \
             | while read -r dll; do cp -u "$dll" bundle-windows/; done
 
-          # GTK4 charge dynamiquement vulkan-1.dll via LoadLibrary sur Windows.
-          # Comme cette liaison est tardive, ldd ne la détecte pas sur nekoland.exe.
-          # On la copie donc explicitement pour éviter le crash au lancement.
           if [ -f /mingw64/bin/vulkan-1.dll ]; then
             cp -u /mingw64/bin/vulkan-1.dll bundle-windows/
           fi
 
-          # Loaders gdk-pixbuf (chargement des PNG des sprites) + cache en chemins relatifs.
+          # Loaders gdk-pixbuf
           mkdir -p bundle-windows/lib/gdk-pixbuf-2.0/2.10.0
           cp -r /mingw64/lib/gdk-pixbuf-2.0/2.10.0/loaders bundle-windows/lib/gdk-pixbuf-2.0/2.10.0/
           ( cd bundle-windows/lib/gdk-pixbuf-2.0/2.10.0 && gdk-pixbuf-query-loaders loaders/*.dll > loaders.cache )
-          # Les loaders peuvent eux-mêmes dépendre de DLL (libpng, jpeg…) : on les ajoute.
           for l in bundle-windows/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll; do
             ldd "$l" | grep -i '/mingw64/bin/' | awk '{print $3}'; done | sort -u \
             | while read -r dll; do cp -u "$dll" bundle-windows/; done
 
-          # Schémas GLib (compilés).
+          # Schémas GLib
           mkdir -p bundle-windows/share/glib-2.0/schemas
           glib-compile-schemas /mingw64/share/glib-2.0/schemas --targetdir bundle-windows/share/glib-2.0/schemas
 
-          # Icônes (thème par défaut GTK).
+          # Icônes GTK
           mkdir -p bundle-windows/share/icons
           cp -r /mingw64/share/icons/Adwaita bundle-windows/share/icons/ || true
           cp -r /mingw64/share/icons/hicolor bundle-windows/share/icons/ || true
@@ -125,14 +117,10 @@ jobs:
           name: nekoland-windows
           path: nekoland-windows.zip
 
-  # Tout est construit sur le runner Apple Silicon (macos-14, abondant) — on ne
-  # dépend plus du runner Intel macos-13 rare/en file d'attente. On compile les
-  # DEUX cibles puis on fusionne (lipo) en un binaire universel x86_64+arm64.
-  build-macos:
-    name: Build macOS (universal)
-    if: false
+  build-macos-arm64:
+    name: Build macOS (Apple Silicon arm64)
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
@@ -140,59 +128,71 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust (both Apple targets)
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
-      - name: Install GTK4 (arm64, Homebrew natif)
+      - name: Install GTK4
         run: brew install gtk4 pkgconfig
 
-      - name: Install GTK4 (x86_64, Homebrew sous Rosetta)
-        run: |
-          softwareupdate --install-rosetta --agree-to-license || true
-          if [ ! -x /usr/local/bin/brew ]; then
-            arch -x86_64 /bin/bash -c \
-              "NONINTERACTIVE=1 $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          fi
-          # libffi/zlib/bzip2 : libs « système » que le bottle gtk4 ne tire pas
-          # toujours en keg sous Rosetta ; on les installe pour avoir leurs .pc.
-          arch -x86_64 /usr/local/bin/brew install gtk4 pkgconf libffi zlib bzip2
-
       - name: Build arm64
-        id: build
         run: cargo build --release --target aarch64-apple-darwin
 
-      - name: Build x86_64
+      - name: Create Bundle
         run: |
-          # pkg-config isolé sur le préfixe x86_64 (/usr/local) pour ne pas piocher
-          # une lib arm64 (/opt/homebrew). `find -L` suit les symlinks opt/* → Cellar,
-          # et capte zlib/bzip2/libffi installés à l'étape précédente.
-          XPC="$(find -L /usr/local -type d -name pkgconfig 2>/dev/null | tr '\n' ':')"
-          echo "zlib.pc : $(find -L /usr/local -name 'zlib.pc' 2>/dev/null | head -1 || echo MANQUANT)"
-          PKG_CONFIG_LIBDIR="$XPC" PKG_CONFIG_ALLOW_CROSS=1 \
-            cargo build --release --target x86_64-apple-darwin
-
-      - name: Create universal bundle
-        run: |
-          mkdir -p bundle-macos/assets
-          cp -r assets/* bundle-macos/assets/
-          lipo -create -output bundle-macos/nekoland \
-            target/aarch64-apple-darwin/release/nekoland \
-            target/x86_64-apple-darwin/release/nekoland
-          lipo -info bundle-macos/nekoland
-          tar -czvf nekoland-macos-universal.tar.gz -C bundle-macos .
+          mkdir -p bundle-macos-arm64/assets
+          cp -r assets/* bundle-macos-arm64/assets/
+          cp target/aarch64-apple-darwin/release/nekoland bundle-macos-arm64/
+          cp install_macos.sh bundle-macos-arm64/
+          tar -czvf nekoland-macos-arm64.tar.gz -C bundle-macos-arm64 .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nekoland-macos-universal
-          path: nekoland-macos-universal.tar.gz
+          name: nekoland-macos-arm64
+          path: nekoland-macos-arm64.tar.gz
+
+  build-macos-x86_64:
+    name: Build macOS (Intel x86_64)
+    runs-on: macos-13
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Install GTK4
+        run: brew install gtk4 pkgconfig
+
+      - name: Build x86_64
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create Bundle
+        run: |
+          mkdir -p bundle-macos-x86_64/assets
+          cp -r assets/* bundle-macos-x86_64/assets/
+          cp target/x86_64-apple-darwin/release/nekoland bundle-macos-x86_64/
+          cp install_macos.sh bundle-macos-x86_64/
+          tar -czvf nekoland-macos-x86_64.tar.gz -C bundle-macos-x86_64 .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nekoland-macos-x86_64
+          path: nekoland-macos-x86_64.tar.gz
 
   create_release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows, build-macos-arm64, build-macos-x86_64]
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/master'
     permissions:
       contents: write
@@ -218,11 +218,17 @@ jobs:
           path: release-assets
         continue-on-error: true
 
-      - name: Download macOS Artifacts (x86_64 + arm64)
+      - name: Download macOS ARM64 Artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: nekoland-macos-*
-          merge-multiple: true
+          name: nekoland-macos-arm64
+          path: release-assets
+        continue-on-error: true
+
+      - name: Download macOS x86_64 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nekoland-macos-x86_64
           path: release-assets
         continue-on-error: true
 
