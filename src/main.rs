@@ -1,12 +1,11 @@
-//! Neko desktop — overlay Wayland (layer-shell) qui anime un chat à l'écran.
+//! NekoLand desktop — overlay multi-écrans toujours au premier plan.
 //!
 //! Architecture :
-//!   - UN overlay layer-shell PAR moniteur (always-on-top, click-through). Le
-//!     chat évolue dans un espace de coordonnées GLOBAL (union des moniteurs) ;
-//!     chaque overlay le dessine décalé de l'offset de son moniteur.
-//!     → contourne l'interdiction Wayland de repositionner sa propre fenêtre.
-//!   - Le chat poursuit une pelote (toy) ; clics Twitch Heat prioritaires.
-//!   - Réglages persistants (config.json) ; icône de barre système (ksni).
+//!   - Un overlay par moniteur physique (always-on-top, click-through dynamique).
+//!   - Espace de coordonnées global unifié avec confinement strict aux écrans visibles.
+//!   - Drag & Drop interactif : le chat peut être attrapé à la souris/tactile et déplacé.
+//!   - Le chat poursuit une pelote (toy) ou le curseur, ou erre de manière autonome.
+//!   - Réglages persistants (config.json), menu de barre système (tray) et dashboard GTK4 épuré.
 
 #![windows_subsystem = "windows"]
 
@@ -29,7 +28,7 @@ mod tray_sys;
 #[cfg(not(target_os = "linux"))]
 use tray_sys as tray;
 mod twitch;
-mod util;
+pub mod util;
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -48,46 +47,154 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use pet::{Pet, Sprites, State};
 use toy::Toy;
 use twitch::Target;
+use util::ScreenRect;
 
 const APP_ID: &str = "com.warmadon.neko_rust";
-/// Skin sans warning si son `.json` manque (il partage le mapping par défaut).
 const DEFAULT_SKIN: &str = "neko";
-/// Durée de repos du chat après avoir attrapé la pelote (ticks ~10/s).
 const REST_TICKS: i32 = 25;
-/// Focus continu d'une fenêtre au-delà duquel le chat passe en mode « dock ».
 const DOCK_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
-/// Délai sans clic Twitch après lequel le chat reprend son comportement normal.
 const TWITCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Routine en cours en mode Autonome — pilote la sélection de cible.
 enum Routine {
-    /// Errance aléatoire normale : wander (x, y, compteur) est maître.
     Free,
-    /// Zoomies : enchaîne plusieurs cibles lointaines à vive allure.
     Zoomies { targets: Vec<(f64, f64)>, idx: usize },
-    /// Tour de périmètre : le chat fait le tour du bord de la fenêtre focalisée.
     DockPerimeter { waypoints: Vec<(f64, f64)>, idx: usize },
 }
 
-/// État pour le debug visuel (overlay), partagé tick → fonctions de dessin.
 struct Dbg {
     on: bool,
     target: (f64, f64),
     behavior: &'static str,
-    /// Fenêtre focus + secondes restantes avant dock (`<= 0` = déjà docké).
-    /// `None` hors mode Autonome ou sans fenêtre focus.
     dock: Option<(f64, f64, f64, f64, i64)>,
 }
 
+struct DragState {
+    dragging: bool,
+    offset_x: f64,
+    offset_y: f64,
+}
+
+fn handle_cli(cfg: &mut config::Config, assets: &Path) {
+    let args: Vec<String> = std::env::args().collect();
+    if !cfg.lang.is_empty() {
+        i18n::set_lang(&cfg.lang);
+    }
+
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "-h" | "--help" => {
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    windows_sys::Win32::System::Console::AttachConsole(u32::MAX);
+                }
+                println!("NekoLand v{}\n{}\n", env!("CARGO_PKG_VERSION"), i18n::t("cli_desc"));
+                println!("{}\n", i18n::t("cli_usage"));
+                println!("Options:");
+                println!("  -h, --help               {}", i18n::t("cli_opt_help"));
+                println!("  -v, --version            {}", i18n::t("cli_opt_version"));
+                println!("  -s, --skin <NAME>        {}", i18n::t("cli_opt_skin"));
+                println!("  -t, --toy <NAME>         {}", i18n::t("cli_opt_toy"));
+                println!("  -m, --mode <MODE>        {}", i18n::t("cli_opt_mode"));
+                println!("  -z, --scale <FACTOR>     {}", i18n::t("cli_opt_scale"));
+                println!("  -c, --twitch <CHANNEL>   {}", i18n::t("cli_opt_twitch"));
+                println!("  -l, --lang <LANG>        {}", i18n::t("cli_opt_lang"));
+                println!("      --list-skins         {}", i18n::t("cli_opt_list_skins"));
+                println!("      --list-toys          {}", i18n::t("cli_opt_list_toys"));
+                println!("  -d, --debug              {}", i18n::t("cli_opt_debug"));
+                std::process::exit(0);
+            }
+            "-v" | "--version" => {
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    windows_sys::Win32::System::Console::AttachConsole(u32::MAX);
+                }
+                println!("NekoLand v{}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            "--list-skins" => {
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    windows_sys::Win32::System::Console::AttachConsole(u32::MAX);
+                }
+                println!("{}", i18n::t("cli_available_skins"));
+                let skins = list_pngs(&assets.join("pets"));
+                for s in skins {
+                    println!("  - {}", s);
+                }
+                std::process::exit(0);
+            }
+            "--list-toys" => {
+                #[cfg(target_os = "windows")]
+                unsafe {
+                    windows_sys::Win32::System::Console::AttachConsole(u32::MAX);
+                }
+                println!("{}", i18n::t("cli_available_toys"));
+                let toys = list_pngs(&assets.join("toys"));
+                for t in toys {
+                    println!("  - {}", t);
+                }
+                std::process::exit(0);
+            }
+            "-s" | "--skin" if i + 1 < args.len() => {
+                i += 1;
+                cfg.skin = args[i].clone();
+            }
+            "-t" | "--toy" if i + 1 < args.len() => {
+                i += 1;
+                cfg.toy = args[i].clone();
+            }
+            "-m" | "--mode" if i + 1 < args.len() => {
+                i += 1;
+                let m = args[i].to_lowercase();
+                if m.starts_with("pel") || m.starts_with("yar") {
+                    cfg.mode = "Pelote".to_string();
+                } else if m.starts_with("auto") {
+                    cfg.mode = "Autonome".to_string();
+                } else if m.starts_with("sou") || m.starts_with("mous") {
+                    cfg.mode = "Souris".to_string();
+                } else if m.starts_with("som") || m.starts_with("sleep") {
+                    cfg.mode = "Sommeil".to_string();
+                } else {
+                    cfg.mode = args[i].clone();
+                }
+            }
+            "-z" | "--scale" if i + 1 < args.len() => {
+                i += 1;
+                if let Ok(sc) = args[i].parse::<f64>() {
+                    cfg.scale = sc;
+                }
+            }
+            "-c" | "--twitch" if i + 1 < args.len() => {
+                i += 1;
+                cfg.twitch_channel = args[i].clone();
+            }
+            "-l" | "--lang" if i + 1 < args.len() => {
+                i += 1;
+                let l = args[i].clone();
+                cfg.lang = l.clone();
+                i18n::set_lang(&l);
+            }
+            "-d" | "--debug" => {
+                std::env::set_var("NEKO_DEBUG", "1");
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+}
+
 fn main() -> glib::ExitCode {
-    // En mode debug, ouvre une console Windows pour voir les logs (NEKO_DEBUG=1).
-    // Le binaire est toujours compilé sans console (#![windows_subsystem="windows"]).
+    let assets = assets_dir();
+    let mut cfg = config::load();
+    handle_cli(&mut cfg, &assets);
+
     #[cfg(target_os = "windows")]
     if std::env::var("NEKO_DEBUG").is_ok() {
         unsafe { windows_sys::Win32::System::Console::AllocConsole(); }
     }
 
-    // Évite les fuites de VRAM sous GTK4 Vulkan lors de dessins continus sur de grandes surfaces
     std::env::set_var("GSK_RENDERER", "cairo");
 
     let app = Application::builder()
@@ -98,16 +205,30 @@ fn main() -> glib::ExitCode {
     app.run()
 }
 
-
 fn build_ui(app: &Application) {
     let display = gtk::gdk::Display::default().expect("aucun display GDK");
     let cfg = config::load();
     let assets = assets_dir();
     let debug = std::env::var("NEKO_DEBUG").is_ok();
 
-    // ---- Espace global = union de tous les moniteurs ----
+    if !cfg.lang.is_empty() {
+        i18n::set_lang(&cfg.lang);
+    }
+
+    // ---- Espace global et calcul des écrans réels ----
     let monitors = monitors(&display);
     let (orig_x, orig_y, total_w, total_h) = union_bounds(&monitors);
+
+    let mut screens = Vec::with_capacity(monitors.len());
+    for m in &monitors {
+        let g = m.geometry();
+        screens.push(ScreenRect::new(
+            (g.x() - orig_x) as f64,
+            (g.y() - orig_y) as f64,
+            g.width() as f64,
+            g.height() as f64,
+        ));
+    }
 
     if debug {
         eprintln!("[neko][debug] ── démarrage ──");
@@ -115,51 +236,18 @@ fn build_ui(app: &Application) {
         eprintln!("[neko][debug] assets        {}", assets.display());
         eprintln!("[neko][debug] config        {}", config::config_path().display());
         eprintln!(
-            "[neko][debug] réglages      skin={} toy={} scale={} mode={} twitch={}",
-            cfg.skin,
-            cfg.toy,
-            cfg.scale,
-            cfg.mode,
+            "[neko][debug] réglages      skin={} toy={} scale={} mode={} twitch={} lang={}",
+            cfg.skin, cfg.toy, cfg.scale, cfg.mode,
             if cfg.twitch_channel.is_empty() { "-" } else { &cfg.twitch_channel },
+            i18n::current_lang()
         );
-        eprintln!(
-            "[neko][debug] union         origine=({orig_x},{orig_y}) {total_w}×{total_h}",
-        );
-        for (i, m) in monitors.iter().enumerate() {
-            let g = m.geometry();
-            eprintln!(
-                "[neko][debug] moniteur {i}    {}×{} @ ({},{})",
-                g.width(), g.height(), g.x(), g.y(),
-            );
+        eprintln!("[neko][debug] union         origine=({orig_x},{orig_y}) {total_w}×{total_h}");
+        for (i, s) in screens.iter().enumerate() {
+            eprintln!("[neko][debug] écran {}       {}×{} @ ({},{})", i, s.w, s.h, s.x, s.y);
         }
-        eprintln!(
-            "[neko][debug] catalogue     {} skins, {} pelotes",
-            list_pngs(&assets.join("pets")).len(),
-            list_pngs(&assets.join("toys")).len(),
-        );
-        eprintln!(
-            "[neko][debug] hyprctl       {}",
-            if std::process::Command::new("hyprctl").arg("version").output().is_ok() {
-                "présent (mode dock possible)"
-            } else {
-                "absent (pas de mode dock)"
-            },
-        );
     }
 
-    // ---- Fond de fenêtre transparent (sinon l'overlay masque tout) ----
-    // NB : surtout PAS de `!important` ici — le parseur CSS de GTK4 le rejette
-    // (« Junk at end of value »), ce qui invalide toute la règle et laisse le fond
-    // opaque du thème (p.ex. Adwaita blanc quand le thème système n'a pas de
-    // variante GTK4). La priorité USER suffit à passer devant le thème (200).
-    // Scopé à `.transparent-overlay` pour ne pas affecter le dashboard (`.dashboard`).
-    // `background-image: none` neutralise les dégradés/motifs posés par le thème.
-    // `NEKO_BG` permet de forcer/diagnostiquer la couleur de fond de l'overlay
-    // (ex. `NEKO_BG=red` pour vérifier que le CSS s'applique bien). Défaut : transparent.
     let bg = std::env::var("NEKO_BG").unwrap_or_else(|_| "transparent".to_string());
-    // On cible aussi `.transparent-overlay *` : certains thèmes (souvent copiés dans
-    // ~/.config/gtk-4.0/gtk.css) peignent un node enfant (box, *) plutôt que `window`,
-    // ce qui laissait l'overlay opaque même avec le node `window` rendu transparent.
     let provider = gtk::CssProvider::new();
     provider.load_from_data(&format!(
         "window.transparent-overlay, \
@@ -172,16 +260,12 @@ fn build_ui(app: &Application) {
             background-image: none; \
          }}"
     ));
-    // Au-dessus de USER (800) : GTK4 n'a pas de `!important`, donc le seul moyen de
-    // passer devant le `~/.config/gtk-4.0/gtk.css` éventuel de l'utilisateur (chargé
-    // lui aussi à USER) est d'avoir un numéro de priorité strictement supérieur.
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_USER + 1,
     );
 
-    // ---- État partagé Twitch <-> GTK (coordonnées dans l'espace global) ----
     let shared = Arc::new(Mutex::new(Target {
         x: total_w / 2.0,
         y: total_h / 2.0,
@@ -189,7 +273,6 @@ fn build_ui(app: &Application) {
         updated: std::time::Instant::now(),
     }));
 
-    // ---- Ressources partagées (cellules → reload à chaud possible) ----
     let scale = Rc::new(Cell::new(cfg.scale));
     let dbg = Rc::new(RefCell::new(Dbg {
         on: debug,
@@ -200,16 +283,15 @@ fn build_ui(app: &Application) {
     let sprite_size = pet::TILE as f64 * cfg.scale;
 
     let sprites = load_mapping(&assets, &cfg.skin);
-    let pet = Rc::new(RefCell::new(Pet::new(total_w, total_h, sprite_size, sprites)));
+    let pet = Rc::new(RefCell::new(Pet::new(total_w, total_h, sprite_size, sprites, screens.clone())));
     let pet_pix = Rc::new(RefCell::new(load_sprite(&pets_png(&assets, &cfg.skin))));
 
-    let toy = Rc::new(RefCell::new(Toy::new(total_w, total_h, sprite_size)));
+    let toy = Rc::new(RefCell::new(Toy::new(total_w, total_h, sprite_size, screens.clone())));
     let toy_pix = Rc::new(RefCell::new(load_sprite(&toys_png(&assets, &cfg.toy))));
     if cfg.mode != "Pelote" {
-        toy.borrow_mut().hide(); // pas de pelote hors du mode jeu
+        toy.borrow_mut().hide();
     }
 
-    // ---- Tray icon + état de contrôle partagé (tray ↔ GTK) ----
     let control = Arc::new(Mutex::new(config::Control::from_config(&cfg)));
     let scales = vec![1.0, 1.5, 2.0, 3.0];
     let modes: Vec<String> = ["Pelote", "Autonome", "Souris", "Sommeil"]
@@ -225,10 +307,6 @@ fn build_ui(app: &Application) {
         control.clone(),
     );
 
-    // ---- Fenêtre owner cachée (Windows) ----------------------------------------
-    // Une fenêtre WS_EX_TOOLWINDOW sans titre assignée comme owner de chaque overlay
-    // empêche Windows d'afficher les overlays dans la barre des tâches, même quand
-    // GTK réinitialise WS_EX_TOOLWINDOW sur les fenêtres elles-mêmes.
     #[cfg(target_os = "windows")]
     let taskbar_owner: windows_sys::Win32::Foundation::HWND = unsafe {
         use std::ffi::OsStr;
@@ -247,15 +325,23 @@ fn build_ui(app: &Application) {
         )
     };
 
-    // ---- Un overlay layer-shell par moniteur ----
+    let drag_state = Rc::new(RefCell::new(DragState {
+        dragging: false,
+        offset_x: 0.0,
+        offset_y: 0.0,
+    }));
+
     let mut areas = Vec::with_capacity(monitors.len());
-    for monitor in &monitors {
+    let mut overlay_windows = Vec::with_capacity(monitors.len());
+
+    for (i, monitor) in monitors.iter().enumerate() {
         let geo = monitor.geometry();
-        let off_x = (geo.x() - orig_x) as f64; // offset du moniteur dans l'union
-        let off_y = (geo.y() - orig_y) as f64;
+        let off_x = screens[i].x;
+        let off_y = screens[i].y;
 
         let window = ApplicationWindow::builder().application(app).build();
         window.add_css_class("transparent-overlay");
+
         #[cfg(target_os = "linux")]
         {
             if gtk4_layer_shell::is_supported() {
@@ -268,21 +354,15 @@ fn build_ui(app: &Application) {
                 window.set_exclusive_zone(-1);
                 window.set_keyboard_mode(KeyboardMode::None);
             } else {
-                // Fallback si layer-shell n'est pas supporté (ex: GNOME Wayland ou X11)
                 window.set_decorated(false);
-                let geo = monitor.geometry();
                 window.set_default_size(geo.width(), geo.height());
             }
         }
+
         #[cfg(not(target_os = "linux"))]
         {
             window.set_decorated(false);
-            let geo = monitor.geometry();
-            // GTK4 sur Windows est DPI-aware : geo retourne des pixels logiques.
-            // set_default_size attend aussi des pixels logiques (GTK gère le scaling
-            // du contenu). En revanche, SetWindowPos (Win32) dans un process DPI-aware
-            // attend des pixels PHYSIQUES. On capture scale_factor pour la conversion.
-            let sf = monitor.scale_factor(); // ex. 2 à 200 % DPI
+            let sf = monitor.scale_factor();
             window.set_default_size(geo.width(), geo.height());
 
             let mx = geo.x() * sf;
@@ -290,9 +370,6 @@ fn build_ui(app: &Application) {
             let mw = geo.width() * sf;
             let mh = geo.height() * sf;
 
-            // connect_map fire après que GTK a terminé de mapper/positionner la fenêtre.
-            // On reporte via idle_add pour appliquer les styles Win32 après que GTK
-            // a fini son propre post-map (qui réinitialiserait nos styles sinon).
             window.connect_map(move |w| {
                 #[cfg(target_os = "windows")]
                 {
@@ -302,8 +379,6 @@ fn build_ui(app: &Application) {
                     if let Some(surface) = w.surface() {
                         if let Ok(win32_surface) = surface.downcast::<Win32Surface>() {
                             let hwnd = win32_surface.handle().0 as HWND;
-                            // GTK réinitialise les styles Win32 après map+idle ;
-                            // on attend 500ms pour être sûr qu'il a fini.
                             glib::timeout_add_local_once(
                                 std::time::Duration::from_millis(500),
                                 move || {
@@ -314,11 +389,8 @@ fn build_ui(app: &Application) {
                                         WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_EX_APPWINDOW,
                                     };
                                     unsafe {
-                                        // Assigner l'owner caché → retire l'overlay de la barre des tâches
                                         SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, taskbar_owner as isize);
-                                        // Positionner et mettre en premier plan
                                         SetWindowPos(hwnd, HWND_TOPMOST, mx, my, mw, mh, 0);
-                                        // WS_EX_LAYERED requis pour click-through via WS_EX_TRANSPARENT
                                         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
                                         let new_style = (style
                                             | (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize)
@@ -331,20 +403,18 @@ fn build_ui(app: &Application) {
                         }
                     }
                 }
-                
+
                 #[cfg(target_os = "macos")]
                 {
                     use gdk4_macos::MacosSurface;
                     use objc::{msg_send, sel, sel_impl};
-                    
+
                     if let Some(surface) = w.surface() {
                         if let Ok(mac_surface) = surface.downcast::<MacosSurface>() {
                             let nswindow_ptr = mac_surface.native();
                             unsafe {
                                 let nswindow: *mut objc::runtime::Object = nswindow_ptr as _;
-                                // setIgnoresMouseEvents:YES
                                 let _: () = msg_send![nswindow, setIgnoresMouseEvents: true];
-                                // setLevel:NSFloatingWindowLevel (3)
                                 let _: () = msg_send![nswindow, setLevel: 3isize];
                             }
                         }
@@ -356,6 +426,8 @@ fn build_ui(app: &Application) {
         let area = DrawingArea::new();
         area.set_hexpand(true);
         area.set_vexpand(true);
+
+        // Dessin du chat, de la pelote et du débug
         {
             let pet = pet.clone();
             let pet_pix = pet_pix.clone();
@@ -363,20 +435,19 @@ fn build_ui(app: &Application) {
             let toy_pix = toy_pix.clone();
             let scale = scale.clone();
             let dbg = dbg.clone();
+
             area.set_draw_func(move |_a, cr, _w, _h| {
                 let sc = scale.get();
-                // Helper : blit d'une tuile 32×32 à une position globale.
                 let blit = |pb: &Pixbuf, fx: i32, fy: i32, gx: f64, gy: f64| {
                     let sub = pb.new_subpixbuf(fx, fy, pet::TILE, pet::TILE);
                     let _ = cr.save();
-                    cr.translate(gx - off_x, gy - off_y); // global → local moniteur
+                    cr.translate(gx - off_x, gy - off_y);
                     cr.scale(sc, sc);
                     cr.set_source_pixbuf(&sub, 0.0, 0.0);
                     let _ = cr.paint();
                     let _ = cr.restore();
                 };
 
-                // Pelote (sous le chat).
                 if let Some(tp) = toy_pix.borrow().as_ref() {
                     let t = toy.borrow();
                     if t.active {
@@ -384,14 +455,13 @@ fn build_ui(app: &Application) {
                         blit(tp, fx, fy, t.x, t.y);
                     }
                 }
-                // Chat.
+
                 if let Some(pb) = pet_pix.borrow().as_ref() {
                     let p = pet.borrow();
                     let (fx, fy) = p.current_frame();
                     blit(pb, fx, fy, p.x, p.y);
                 }
 
-                // Debug visuel : trajet vers la cible + marqueur + statut.
                 let d = dbg.borrow();
                 if d.on {
                     let p = pet.borrow();
@@ -402,22 +472,21 @@ fn build_ui(app: &Application) {
                     let ty = d.target.1 - off_y;
 
                     cr.set_line_width(2.0);
-                    cr.set_source_rgba(1.0, 0.3, 0.3, 0.8); // trajet chat → cible
+                    cr.set_source_rgba(1.0, 0.3, 0.3, 0.8);
                     cr.move_to(cx, cy);
                     cr.line_to(tx, ty);
                     let _ = cr.stroke();
-                    cr.move_to(tx - 7.0, ty); // croix sur la cible
+                    cr.move_to(tx - 7.0, ty);
                     cr.line_to(tx + 7.0, ty);
                     cr.move_to(tx, ty - 7.0);
                     cr.line_to(tx, ty + 7.0);
                     let _ = cr.stroke();
 
-                    cr.set_source_rgba(0.3, 1.0, 0.5, 0.95); // statut près du chat
+                    cr.set_source_rgba(0.3, 1.0, 0.5, 0.95);
                     cr.set_font_size(13.0);
                     cr.move_to(cx + half + 4.0, cy - half - 4.0);
                     let _ = cr.show_text(&format!("{} · {}", d.behavior, p.current_clip()));
 
-                    // Compte à rebours avant dock, en haut-droite de la fenêtre focus.
                     if let Some((wx, wy, ww, _wh, rem)) = d.dock {
                         let rx = wx + ww - off_x;
                         let ry = wy - off_y;
@@ -428,35 +497,77 @@ fn build_ui(app: &Application) {
                         };
                         cr.set_font_size(13.0);
                         let tw = cr.text_extents(&label).map(|e| e.width()).unwrap_or(60.0);
-                        cr.set_source_rgba(0.0, 0.0, 0.0, 0.6);
-                        cr.rectangle(rx - tw - 10.0, ry + 2.0, tw + 8.0, 19.0);
-                        let _ = cr.fill();
-                        cr.set_source_rgba(1.0, 0.85, 0.2, 0.97);
                         cr.move_to(rx - tw - 6.0, ry + 16.0);
                         let _ = cr.show_text(&label);
                     }
                 }
             });
         }
+
+        // Contrôleur de drag GTK (GestureDrag) pour Linux et macOS
+        {
+            let gesture = gtk::GestureDrag::new();
+            let pet_begin = pet.clone();
+            let drag_begin = drag_state.clone();
+            let area_begin = area.clone();
+
+            gesture.connect_drag_begin(move |_g, start_x, start_y| {
+                let gx = start_x + off_x;
+                let gy = start_y + off_y;
+                let p = pet_begin.borrow();
+                if p.hit_test(gx, gy) {
+                    let mut ds = drag_begin.borrow_mut();
+                    ds.dragging = true;
+                    ds.offset_x = gx - p.x;
+                    ds.offset_y = gy - p.y;
+                    drop(p);
+                    pet_begin.borrow_mut().start_drag();
+                    area_begin.queue_draw();
+                }
+            });
+
+            let pet_move = pet.clone();
+            let drag_move = drag_state.clone();
+            let area_move = area.clone();
+            gesture.connect_drag_update(move |_g, offset_x, offset_y| {
+                let ds = drag_move.borrow();
+                if ds.dragging {
+                    let start_point = _g.start_point().unwrap_or((0.0, 0.0));
+                    let cur_gx = start_point.0 + offset_x + off_x;
+                    let cur_gy = start_point.1 + offset_y + off_y;
+                    let target_x = cur_gx - ds.offset_x;
+                    let target_y = cur_gy - ds.offset_y;
+                    pet_move.borrow_mut().drag_to(target_x, target_y);
+                    area_move.queue_draw();
+                }
+            });
+
+            let pet_end = pet.clone();
+            let drag_end = drag_state.clone();
+            let area_end = area.clone();
+            gesture.connect_drag_end(move |_g, _offset_x, _offset_y| {
+                let mut ds = drag_end.borrow_mut();
+                if ds.dragging {
+                    ds.dragging = false;
+                    pet_end.borrow_mut().end_drag();
+                    area_end.queue_draw();
+                }
+            });
+
+            area.add_controller(gesture);
+        }
+
         window.set_child(Some(&area));
-
-        // Click-through : input region vide → tous les clics traversent.
-        window.connect_map(|w| {
-            if let Some(surface) = w.surface() {
-                surface.set_input_region(&gtk::cairo::Region::create());
-            }
-        });
-
         window.present();
+
         areas.push(area);
+        overlay_windows.push(window);
     }
 
-    // ---- Suivi de la fenêtre active (mode dock) ----
     let focus = dock::spawn();
-    // ---- Suivi du curseur (mode Souris) ----
     let cursor = mouse::spawn();
 
-    // ---- Tick d'animation ~10 fps (logique de jeu + redessine les overlays) ----
+    // ---- Boucle principale d'animation à ~10 FPS ----
     {
         let app = app.clone();
         let pet = pet.clone();
@@ -470,30 +581,41 @@ fn build_ui(app: &Application) {
         let focus = focus.clone();
         let cursor = cursor.clone();
         let dbg = dbg.clone();
-        let mut rest: i32 = 0; // ticks de repos restants après une prise
+        let areas = areas.clone();
+        let overlay_windows = overlay_windows.clone();
+        let screens = screens.clone();
+        let drag_state = drag_state.clone();
+
+        let mut rest: i32 = 0;
         let mut seen_version: u64 = 0;
         let mut seen_open: u64 = 0;
         let mut mode = cfg.mode.clone();
         let mut current_skin = cfg.skin.clone();
         let mut json_mtime = file_mtime(&pets_json(&assets, &current_skin));
-        let mut wander = (total_w / 2.0, total_h / 2.0, 0.0_f64); // (x, y, compteur)
-        let mut routine = Routine::Free; // routine autonome courante
+
+        let init_pos = util::random_point_on_screens(&screens, sprite_size, sprite_size);
+        let mut wander = (init_pos.0, init_pos.1, 0.0_f64);
+        let mut routine = Routine::Free;
         let mut dbg_tick: u64 = 0;
-        let mut last_saved = cfg.clone(); // dernière config écrite sur disque
+        let mut last_saved = cfg.clone();
+
         glib::timeout_add_local(Duration::from_millis(100), move || {
-            // Reload à chaud si le tray a changé un réglage.
-            let (version, skin, toyname, sc, cur_mode, open_config) = {
+            // Rechargement à chaud si le tray ou dashboard a modifié la configuration
+            let (version, skin, toyname, sc, cur_mode, cur_lang, open_config) = {
                 let c = control.lock().unwrap();
-                (c.version, c.skin.clone(), c.toy.clone(), c.scale, c.mode.clone(), c.open_config)
+                (c.version, c.skin.clone(), c.toy.clone(), c.scale, c.mode.clone(), c.lang.clone(), c.open_config)
             };
 
-            // Ouverture de l'éditeur de sprites (demandée depuis le tray).
             if open_config != seen_open {
                 seen_open = open_config;
                 mapper::open(&app, assets.clone(), control.clone());
             }
+
             if version != seen_version {
                 seen_version = version;
+                if !cur_lang.is_empty() {
+                    i18n::set_lang(&cur_lang);
+                }
                 *pet_pix.borrow_mut() = load_sprite(&pets_png(&assets, &skin));
                 pet.borrow_mut().set_sprites(load_mapping(&assets, &skin));
                 *toy_pix.borrow_mut() = load_sprite(&toys_png(&assets, &toyname));
@@ -501,7 +623,7 @@ fn build_ui(app: &Application) {
                 pet.borrow_mut().set_sprite_size(size);
                 toy.borrow_mut().set_size(size);
                 scale.set(sc);
-                // La pelote n'existe qu'en mode « Pelote ».
+
                 if cur_mode == "Pelote" {
                     toy.borrow_mut().spawn();
                 } else {
@@ -512,15 +634,12 @@ fn build_ui(app: &Application) {
                 json_mtime = file_mtime(&pets_json(&assets, &current_skin));
             }
 
-            // Reload du mapping si son .json a changé (édité via l'outil sprites).
             let m = file_mtime(&pets_json(&assets, &current_skin));
             if m != json_mtime {
                 json_mtime = m;
                 pet.borrow_mut().set_sprites(load_mapping(&assets, &current_skin));
             }
 
-            // Changement de mode (dropdown) — appliqué à chaque tick, pas seulement
-            // lors d'un reload de version. La pelote n'existe qu'en mode « Pelote ».
             if cur_mode != mode {
                 mode = cur_mode.clone();
                 if mode == "Pelote" {
@@ -530,57 +649,108 @@ fn build_ui(app: &Application) {
                 }
             }
 
-            // Persistance : si un réglage a changé (mode, canal, skin…), on réécrit
-            // la config sur disque (rien n'était sauvegardé auparavant).
+            // Sauvegarde automatique dès modification
             let snapshot = { control.lock().unwrap().to_config() };
             if snapshot != last_saved {
                 config::save(&snapshot);
                 last_saved = snapshot;
             }
 
-            // Clic Twitch : prioritaire, mais expire après TWITCH_TIMEOUT sans
-            // nouveau clic → le chat reprend son comportement normal.
+            // Gestion du Drag & Drop via souris globale (notamment sous Windows)
+            {
+                let c = cursor.lock().unwrap();
+                let mut ds = drag_state.borrow_mut();
+                if c.valid && c.left_down {
+                    let gx = c.x - orig_x as f64;
+                    let gy = c.y - orig_y as f64;
+                    if !ds.dragging {
+                        if pet.borrow().hit_test(gx, gy) {
+                            ds.dragging = true;
+                            ds.offset_x = gx - pet.borrow().x;
+                            ds.offset_y = gy - pet.borrow().y;
+                            pet.borrow_mut().start_drag();
+                        }
+                    } else {
+                        pet.borrow_mut().drag_to(gx - ds.offset_x, gy - ds.offset_y);
+                    }
+                } else if !c.left_down && ds.dragging {
+                    ds.dragging = false;
+                    pet.borrow_mut().end_drag();
+                }
+            }
+
             let (twx, twy, twitch_active) = {
                 let t = shared.lock().unwrap();
                 (t.x, t.y, t.active && t.updated.elapsed() < TWITCH_TIMEOUT)
             };
+
             let (px, py) = {
                 let p = pet.borrow();
                 (p.x, p.y)
             };
             let size = pet::TILE as f64 * scale.get();
             let half = size / 2.0;
-            let (max_x, max_y) = ((total_w - size).max(0.0), (total_h - size).max(0.0));
             let cat_center = (px + half, py + half);
 
-            // Cible à poursuivre. Twitch Heat est prioritaire dès qu'un clic arrive.
+            // Mise à jour dynamique de l'input region de GTK
+            // Permet le click-through partout sur l'écran sauf sur le sprite du chat
+            for (idx, win) in overlay_windows.iter().enumerate() {
+                if let Some(surface) = win.surface() {
+                    let s = screens[idx];
+                    let local_x = px - s.x;
+                    let local_y = py - s.y;
+                    let is_on_this_screen = local_x + size >= 0.0
+                        && local_x <= s.w
+                        && local_y + size >= 0.0
+                        && local_y <= s.h;
+
+                    if drag_state.borrow().dragging {
+                        // Pendant le drag, on capture l'input sur toute la fenêtre
+                        surface.set_input_region(&gtk::cairo::Region::create_rectangle(
+                            &gtk::cairo::RectangleInt::new(0, 0, s.w as i32, s.h as i32),
+                        ));
+                    } else if is_on_this_screen {
+                        let pad = 12.0;
+                        let rect = gtk::cairo::RectangleInt::new(
+                            (local_x - pad).floor() as i32,
+                            (local_y - pad).floor() as i32,
+                            (size + pad * 2.0).ceil() as i32,
+                            (size + pad * 2.0).ceil() as i32,
+                        );
+                        surface.set_input_region(&gtk::cairo::Region::create_rectangle(&rect));
+                    } else {
+                        surface.set_input_region(&gtk::cairo::Region::create());
+                    }
+                }
+            }
+
+            // Détermination du comportement et de la cible de déplacement
             let behavior;
-            let target = if twitch_active {
+            let target = if pet.borrow().is_dragged {
+                behavior = "drag";
+                cat_center
+            } else if twitch_active {
                 behavior = "twitch";
                 (twx, twy)
             } else if mode == "Sommeil" {
                 behavior = "sommeil";
-                cat_center // reste sur place → la pose « arrivée » joue le sommeil
+                cat_center
             } else if mode == "Souris" {
-                // Chasse le curseur : position globale du compositeur → espace union.
                 let c = cursor.lock().unwrap();
                 if c.valid {
                     behavior = "souris";
-                    ((c.x - orig_x as f64).clamp(0.0, total_w),
-                     (c.y - orig_y as f64).clamp(0.0, total_h))
+                    let pt = util::clamp_to_screens(c.x - orig_x as f64 - half, c.y - orig_y as f64 - half, size, size, &screens);
+                    (pt.0 + half, pt.1 + half)
                 } else {
                     behavior = "souris";
-                    cat_center // hyprctl indisponible → le chat reste sur place
+                    cat_center
                 }
             } else if mode == "Autonome" {
-                // Si une fenêtre est focus depuis assez longtemps → mode « dock » :
-                // le chat se promène sous son bord bas (ou fait le tour de la fenêtre).
                 let docked = {
                     let f = focus.lock().unwrap();
                     (f.valid && f.since.elapsed() >= DOCK_DELAY).then(|| (f.x, f.y, f.w, f.h))
                 };
 
-                // Cohérence de routine : on réinitialise si le sous-mode a changé.
                 match &routine {
                     Routine::DockPerimeter { .. } if docked.is_none() => routine = Routine::Free,
                     Routine::Zoomies { .. } if docked.is_some() => routine = Routine::Free,
@@ -588,44 +758,40 @@ fn build_ui(app: &Application) {
                 }
 
                 if let Some((wx, wy, ww, wh)) = docked {
-                    // ── MODE DOCK ──────────────────────────────────────────────────────────
-                    let dock_y = ((wy + wh) - size - orig_y as f64).clamp(0.0, max_y);
-                    let top_y  = (wy - orig_y as f64 + half).clamp(half, total_h - half);
-                    let left_x = (wx - orig_x as f64 + half).clamp(half, total_w - half);
-                    let right_x = (wx + ww - orig_x as f64 - half).clamp(left_x, total_w - half);
+                    let dock_y = (wy + wh) - size - orig_y as f64;
+                    let top_y = wy - orig_y as f64 + half;
+                    let left_x = wx - orig_x as f64 + half;
+                    let right_x = (wx + ww - orig_x as f64 - half).max(left_x);
 
                     let mut next_routine: Option<Routine> = None;
                     let target = match &mut routine {
                         Routine::DockPerimeter { waypoints, idx } => {
-                            // Tour complet : le chat se déplace librement le long du bord.
                             behavior = "périmètre";
                             let wp = waypoints[*idx];
-                            let dist = ((px + half - wp.0).powi(2)
-                                + (py + half - wp.1).powi(2)).sqrt();
+                            let dist = ((px + half - wp.0).powi(2) + (py + half - wp.1).powi(2)).sqrt();
                             if dist <= 40.0 {
                                 *idx += 1;
                                 if *idx >= waypoints.len() {
-                                    // Tour terminé → retour à l'errance dock normale
                                     next_routine = Some(Routine::Free);
-                                    wander.0 = left_x + util::rand_unit() * (right_x - left_x).max(1.0);
+                                    let pt = util::random_point_on_screens(&screens, size, size);
+                                    wander.0 = pt.0 + half;
+                                    wander.1 = pt.1 + half;
                                     wander.2 = 60.0 + util::rand_unit() * 100.0;
                                 }
                             }
                             wp
                         }
                         _ => {
-                            // Errance normale sous la fenêtre, y bloqué.
                             behavior = "dock";
                             pet.borrow_mut().y = dock_y;
                             wander.2 -= 1.0;
                             if wander.2 < 0.0 || wander.0 < left_x || wander.0 > right_x {
                                 if util::rand_unit() < 0.15 {
-                                    // 15% → tour du périmètre de la fenêtre
                                     let waypoints = vec![
-                                        (right_x, dock_y + half), // coin bas-droite
-                                        (right_x, top_y),          // coin haut-droite
-                                        (left_x,  top_y),          // coin haut-gauche
-                                        (left_x,  dock_y + half),  // coin bas-gauche
+                                        (right_x, dock_y + half),
+                                        (right_x, top_y),
+                                        (left_x, top_y),
+                                        (left_x, dock_y + half),
                                     ];
                                     next_routine = Some(Routine::DockPerimeter { waypoints, idx: 0 });
                                 } else {
@@ -639,43 +805,41 @@ fn build_ui(app: &Application) {
                     if let Some(r) = next_routine { routine = r; }
                     target
                 } else {
-                    // ── MODE ERRANCE LIBRE ─────────────────────────────────────────────────
                     let mut next_routine: Option<Routine> = None;
                     let target = match &mut routine {
                         Routine::Zoomies { targets, idx } => {
-                            // Sprint vers les cibles en rafale.
                             behavior = "zoomies";
                             let t = targets[*idx];
-                            let dist = ((px + half - t.0).powi(2)
-                                + (py + half - t.1).powi(2)).sqrt();
+                            let dist = ((px + half - t.0).powi(2) + (py + half - t.1).powi(2)).sqrt();
                             if dist <= 32.0 {
                                 *idx += 1;
                                 if *idx >= targets.len() {
-                                    // Toutes les cibles atteintes → retour errance normale
                                     next_routine = Some(Routine::Free);
-                                    wander.0 = half + util::rand_unit() * max_x;
-                                    wander.1 = half + util::rand_unit() * max_y;
+                                    let pt = util::random_point_on_screens(&screens, size, size);
+                                    wander.0 = pt.0 + half;
+                                    wander.1 = pt.1 + half;
                                     wander.2 = 80.0 + util::rand_unit() * 120.0;
                                 }
                             }
                             t
                         }
                         _ => {
-                            // Errance aléatoire normale.
                             behavior = "errance";
                             wander.2 -= 1.0;
                             if wander.2 < 0.0 {
                                 if util::rand_unit() < 0.10 {
-                                    // 10% → zoomies : 3-5 cibles lointaines en rafale
                                     let n = 3 + (util::rand_unit() * 3.0) as usize;
                                     let targets: Vec<(f64, f64)> = (0..n)
-                                        .map(|_| (half + util::rand_unit() * max_x,
-                                                  half + util::rand_unit() * max_y))
+                                        .map(|_| {
+                                            let pt = util::random_point_on_screens(&screens, size, size);
+                                            (pt.0 + half, pt.1 + half)
+                                        })
                                         .collect();
                                     next_routine = Some(Routine::Zoomies { targets, idx: 0 });
                                 } else {
-                                    wander.0 = half + util::rand_unit() * max_x;
-                                    wander.1 = half + util::rand_unit() * max_y;
+                                    let pt = util::random_point_on_screens(&screens, size, size);
+                                    wander.0 = pt.0 + half;
+                                    wander.1 = pt.1 + half;
                                     wander.2 = 80.0 + util::rand_unit() * 120.0;
                                 }
                             }
@@ -686,144 +850,99 @@ fn build_ui(app: &Application) {
                     target
                 }
             } else {
-                behavior = "pelote";
-                // Mode « Pelote » : vise (et attrape) le centre de la pelote.
-                let mut t = toy.borrow_mut();
-                if t.active {
-                    if t.update(cat_center.0, cat_center.1) {
-                        rest = REST_TICKS; // attrapée → le chat se repose
-                    }
-                    t.center()
+                // Mode Pelote
+                if toy.borrow().active {
+                    behavior = "chasse";
+                    toy.borrow().center()
                 } else if rest > 0 {
+                    behavior = "repos";
                     rest -= 1;
+                    if rest == 0 {
+                        toy.borrow_mut().spawn();
+                        pet.borrow_mut().startle();
+                    }
                     cat_center
                 } else {
-                    t.spawn();
-                    t.center()
+                    behavior = "attente";
+                    cat_center
                 }
             };
 
-            pet.borrow_mut().update(target, State::Chase);
-
-            // ── Réveil en sursaut ────────────────────────────────────────────────────
-            // Si le chat dort et que le curseur passe à moins de 80 px → alerte !
-            if (mode == "Autonome" || mode == "Sommeil") && pet.borrow().is_sleeping() {
-                let c = cursor.lock().unwrap();
-                if c.valid {
-                    let cx = c.x - orig_x as f64;
-                    let cy = c.y - orig_y as f64;
-                    let dist = ((cx - (px + half)).powi(2)
-                        + (cy - (py + half)).powi(2)).sqrt();
-                    if dist < 80.0 {
-                        pet.borrow_mut().startle();
-                    }
-                }
+            // Mise à jour de la pelote (garantie confinée aux écrans réels)
+            if toy.borrow_mut().update(cat_center.0, cat_center.1) {
+                rest = REST_TICKS;
             }
 
-            // Partage cible + comportement + compte à rebours dock pour le debug.
+            // Déplacement du chat vers la cible (si non dragué)
+            pet.borrow_mut().update(target, State::Chase);
+
+            // Log de débogage périodique
             if debug {
-                let dock = if mode == "Autonome" {
-                    let f = focus.lock().unwrap();
-                    f.valid.then(|| {
-                        let rem = DOCK_DELAY.as_secs() as i64 - f.since.elapsed().as_secs() as i64;
-                        (f.x, f.y, f.w, f.h, rem)
-                    })
-                } else {
-                    None
-                };
+                dbg_tick += 1;
+                if dbg_tick % 30 == 0 {
+                    let p = pet.borrow();
+                    let t = toy.borrow();
+                    eprintln!(
+                        "[neko][tick] mode={behavior} clip={} pos=({:.0},{:.0}) target=({:.0},{:.0}) toy_active={}",
+                        p.current_clip(), p.x, p.y, target.0, target.1, t.active
+                    );
+                }
                 let mut d = dbg.borrow_mut();
                 d.target = target;
                 d.behavior = behavior;
-                d.dock = dock;
+                let f = focus.lock().unwrap();
+                d.dock = (f.valid && mode == "Autonome").then(|| {
+                    let rem = DOCK_DELAY.saturating_sub(f.since.elapsed()).as_secs() as i64;
+                    (f.x, f.y, f.w, f.h, rem)
+                });
             }
 
+            // Demande de redessin de toutes les zones
             for area in &areas {
                 area.queue_draw();
-            }
-
-            // État périodique (~toutes les 2 s) en mode debug.
-            if debug {
-                dbg_tick += 1;
-                if dbg_tick % 20 == 0 {
-                    let (cx, cy) = {
-                        let p = pet.borrow();
-                        (p.x, p.y)
-                    };
-                    let f = focus.lock().unwrap();
-                    let win = if f.valid {
-                        format!(
-                            "{} « {} » {}×{}@({},{}) focus {}s",
-                            f.class,
-                            f.title.chars().take(30).collect::<String>(),
-                            f.w as i32, f.h as i32, f.x as i32, f.y as i32,
-                            f.since.elapsed().as_secs(),
-                        )
-                    } else {
-                        "aucune".to_string()
-                    };
-                    eprintln!(
-                        "[neko][debug] mode={mode} comportement={behavior} pos=({cx:.0},{cy:.0}) cible=({:.0},{:.0}) | fenêtre: {win}",
-                        target.0, target.1,
-                    );
-                }
             }
 
             glib::ControlFlow::Continue
         });
     }
 
-    // ---- Superviseur Twitch Heat ----
-    // Surveille le canal configuré (modifiable à chaud depuis le dashboard) et
-    // (re)connecte en conséquence : un canal vide coupe la connexion, un nouveau
-    // canal relance la tâche. Évite d'avoir à redémarrer l'app pour streamer.
+    // Gestionnaire de connexion Twitch Heat
     {
         let shared = shared.clone();
         let control = control.clone();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("runtime tokio");
-            rt.block_on(async move {
-                let mut current = String::new();
-                let mut handle: Option<tokio::task::JoinHandle<()>> = None;
-                loop {
-                    let desired = control.lock().unwrap().twitch_channel.clone();
-                    if desired != current {
-                        if let Some(h) = handle.take() {
-                            h.abort();
-                        }
-                        // Oublie le dernier clic du canal précédent.
-                        {
-                            let mut t = shared.lock().unwrap();
-                            t.active = false;
-                        }
-                        current = desired.clone();
-                        if !current.is_empty() {
-                            handle = Some(tokio::spawn(twitch::run(
-                                current.clone(),
-                                shared.clone(),
-                                total_w,
-                                total_h,
-                            )));
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+        let mut last_channel = cfg.twitch_channel.clone();
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+
+        if !last_channel.is_empty() {
+            rt.spawn(twitch::run(last_channel.clone(), shared.clone(), total_w, total_h));
+        }
+
+        glib::timeout_add_local(Duration::from_millis(500), move || {
+            let current = { control.lock().unwrap().twitch_channel.clone() };
+            if current != last_channel {
+                last_channel = current.clone();
+                if !last_channel.is_empty() {
+                    rt.spawn(twitch::run(last_channel.clone(), shared.clone(), total_w, total_h));
                 }
-            });
+            }
+            glib::ControlFlow::Continue
         });
     }
 }
 
-/// Répertoire des assets : `$NEKO_ASSETS`, sinon `./assets`, à côté de l'exécutable,
-/// `target/<profil>/../../assets` (dev cargo), `~/.local/share/...`, ou `/usr/share`.
-fn assets_dir() -> PathBuf {
+pub fn assets_dir() -> PathBuf {
     if let Ok(d) = std::env::var("NEKO_ASSETS") {
         return PathBuf::from(d);
     }
-    let mut candidates: Vec<PathBuf> = vec![PathBuf::from("assets")];
+
+    let mut candidates = Vec::new();
+    candidates.push(PathBuf::from("assets"));
+
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("assets"));
             if let Some(up) = dir.parent().and_then(Path::parent) {
-                candidates.push(up.join("assets")); // cargo: target/<profil>/exe → ../../assets
+                candidates.push(up.join("assets"));
             }
         }
     }
@@ -850,16 +969,15 @@ fn assets_dir() -> PathBuf {
 
     let target = default_user_dir.unwrap_or_else(|| PathBuf::from("assets"));
     let _ = std::fs::create_dir_all(&target);
-    
+
     let zip_data = include_bytes!("../default_resources.zip");
     if let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(zip_data)) {
         let _ = archive.extract(&target);
     }
-    
+
     target
 }
 
-/// Noms (sans extension) des `.png` d'un répertoire, triés — pour les menus tray.
 pub fn list_pngs(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .into_iter()
@@ -886,13 +1004,10 @@ fn toys_png(assets: &Path, toy: &str) -> PathBuf {
     assets.join("toys").join(format!("{toy}.png"))
 }
 
-/// Date de modification d'un fichier (pour le reload à chaud du mapping).
 fn file_mtime(path: &Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-/// Charge le mapping d'un skin depuis `<assets>/pets/<skin>.json`. Retombe sur le
-/// mapping neko embarqué si le fichier est absent ou invalide.
 fn load_mapping(assets: &Path, skin: &str) -> Sprites {
     let path = assets.join("pets").join(format!("{skin}.json"));
     match std::fs::read_to_string(&path) {
@@ -909,9 +1024,6 @@ fn load_mapping(assets: &Path, skin: &str) -> Sprites {
     Sprites::default()
 }
 
-/// Charge un sprite-sheet et rend transparente la couleur de fond — définie comme
-/// celle du pixel (0,0) — **uniquement si ce pixel est opaque** (sinon le sheet a
-/// déjà son propre alpha et on n'y touche pas).
 pub fn load_sprite(path: &Path) -> Option<Pixbuf> {
     let pixbuf = Pixbuf::from_file(path)
         .map_err(|_| eprintln!("[neko] sprite introuvable : {}", path.display()))
@@ -931,7 +1043,6 @@ pub fn load_sprite(path: &Path) -> Option<Pixbuf> {
     pixbuf.add_alpha(true, r, g, b).ok()
 }
 
-/// Liste des moniteurs connectés.
 fn monitors(display: &gtk::gdk::Display) -> Vec<gtk::gdk::Monitor> {
     let model = display.monitors();
     (0..model.n_items())
@@ -939,8 +1050,6 @@ fn monitors(display: &gtk::gdk::Display) -> Vec<gtk::gdk::Monitor> {
         .collect()
 }
 
-/// Boîte englobante de tous les moniteurs : (origine_x, origine_y, largeur, hauteur).
-/// Fallback 1920x1080 si aucun moniteur n'est rapporté.
 fn union_bounds(monitors: &[gtk::gdk::Monitor]) -> (i32, i32, f64, f64) {
     if monitors.is_empty() {
         return (0, 0, 1920.0, 1080.0);
