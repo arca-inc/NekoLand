@@ -53,7 +53,10 @@ pub fn spawn() -> Arc<Mutex<Cursor>> {
 fn query() -> Option<(f64, f64, bool)> {
     #[cfg(target_os = "windows")]
     {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetAsyncKeyState};
+        extern "system" {
+            fn GetAsyncKeyState(vKey: i32) -> i16;
+        }
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
         let mut point = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
         unsafe {
             if GetCursorPos(&mut point) != 0 {

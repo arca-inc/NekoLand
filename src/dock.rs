@@ -8,6 +8,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "windows"))]
 use serde_json::Value;
 
 /// État de la fenêtre focus, en coordonnées globales du compositeur.
@@ -89,7 +90,6 @@ fn query() -> Option<Win> {
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect};
-        use windows_sys::Win32::Foundation::HWND;
         
         unsafe {
             let hwnd = GetForegroundWindow();
