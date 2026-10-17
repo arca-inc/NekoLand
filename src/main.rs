@@ -9,10 +9,15 @@
 
 #![windows_subsystem = "windows"]
 
-// GdkWin32Screen was removed in GTK4 4.15+; gdk4-win32 0.9.5 still references it.
+// GdkWin32Screen and gdk_win32_display_get_win32hcursor were removed in GTK4 4.15+ / 4.16+;
+// gdk4-win32 0.9.5 still references them. Stubs provide missing symbols to linker.
 #[cfg(target_os = "windows")]
 #[no_mangle]
 pub extern "C" fn gdk_win32_screen_get_type() -> u64 { 0 }
+
+#[cfg(target_os = "windows")]
+#[no_mangle]
+pub extern "C" fn gdk_win32_display_get_win32hcursor(_display: *mut std::ffi::c_void, _cursor: *mut std::ffi::c_void) -> isize { 0 }
 
 pub mod config;
 mod dock;
