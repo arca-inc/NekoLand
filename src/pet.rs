@@ -140,8 +140,8 @@ impl Pet {
 
     /// Vérifie si un clic / pointeur (gx, gy) touche la hitbox du chat.
     pub fn hit_test(&self, gx: f64, gy: f64) -> bool {
-        // Marge de tolérance de 10px autour du sprite pour une saisie tactile/souris agréable
-        let pad = 10.0;
+        // Marge de tolérance de 16px autour du sprite pour une saisie tactile/souris agréable
+        let pad = 16.0;
         gx >= (self.x - pad)
             && gx <= (self.x + self.sprite + pad)
             && gy >= (self.y - pad)

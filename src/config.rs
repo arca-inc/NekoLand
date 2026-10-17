@@ -39,9 +39,14 @@ pub fn config_path() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        // Sur Windows, on utilise APPDATA.
         if let Ok(appdata) = std::env::var("APPDATA") {
             return PathBuf::from(appdata).join("neko-desktop").join("config.json");
+        }
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            return PathBuf::from(userprofile).join("AppData").join("Roaming").join("neko-desktop").join("config.json");
+        }
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(localappdata).join("neko-desktop").join("config.json");
         }
     }
     let base = std::env::var("XDG_CONFIG_HOME")

@@ -104,3 +104,66 @@ pub fn clamp_to_screens(rx: f64, ry: f64, rw: f64, rh: f64, screens: &[ScreenRec
 
     best_screen.clamp_rect(rx, ry, rw, rh)
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MonitorMapping {
+    pub phys_x: f64,
+    pub phys_y: f64,
+    pub phys_w: f64,
+    pub phys_h: f64,
+    pub log_x: f64,
+    pub log_y: f64,
+    pub sf: f64,
+}
+
+impl MonitorMapping {
+    pub fn new(phys_x: f64, phys_y: f64, phys_w: f64, phys_h: f64, log_x: f64, log_y: f64, sf: f64) -> Self {
+        MonitorMapping {
+            phys_x,
+            phys_y,
+            phys_w,
+            phys_h,
+            log_x,
+            log_y,
+            sf: if sf > 0.0 { sf } else { 1.0 },
+        }
+    }
+
+    pub fn to_logical(&self, cx: f64, cy: f64) -> (f64, f64) {
+        let local_x = (cx - self.phys_x) / self.sf;
+        let local_y = (cy - self.phys_y) / self.sf;
+        (self.log_x + local_x, self.log_y + local_y)
+    }
+
+    pub fn contains_phys(&self, cx: f64, cy: f64) -> bool {
+        cx >= self.phys_x && cx <= (self.phys_x + self.phys_w)
+            && cy >= self.phys_y && cy <= (self.phys_y + self.phys_h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_screen_rect_clamp() {
+        let s = ScreenRect::new(0.0, 0.0, 1920.0, 1080.0);
+        assert_eq!(s.clamp_rect(-50.0, -50.0, 64.0, 64.0), (0.0, 0.0));
+        assert_eq!(s.clamp_rect(2000.0, 2000.0, 64.0, 64.0), (1920.0 - 64.0, 1080.0 - 64.0));
+    }
+
+    #[test]
+    fn test_monitor_mapping_hidpi_200() {
+        // Laptop tactile 1920x1080 à 200% (échelle 2.0)
+        // Logique GTK : 960x540
+        let m = MonitorMapping::new(0.0, 0.0, 1920.0, 1080.0, 0.0, 0.0, 2.0);
+        assert!(m.contains_phys(960.0, 540.0));
+        let (lx, ly) = m.to_logical(960.0, 540.0);
+        assert!((lx - 480.0).abs() < 1e-6);
+        assert!((ly - 270.0).abs() < 1e-6);
+
+        let (lx, ly) = m.to_logical(1920.0, 1080.0);
+        assert!((lx - 960.0).abs() < 1e-6);
+        assert!((ly - 540.0).abs() < 1e-6);
+    }
+}

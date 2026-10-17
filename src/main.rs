@@ -52,7 +52,7 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use pet::{Pet, Sprites, State};
 use toy::Toy;
 use twitch::Target;
-use util::ScreenRect;
+use util::{MonitorMapping, ScreenRect};
 
 const APP_ID: &str = "com.warmadon.neko_rust";
 const DEFAULT_SKIN: &str = "neko";
@@ -71,6 +71,54 @@ struct Dbg {
     target: (f64, f64),
     behavior: &'static str,
     dock: Option<(f64, f64, f64, f64, i64)>,
+}
+
+fn map_cursor_to_logical(
+    cx: f64,
+    cy: f64,
+    mappings: &[MonitorMapping],
+    orig_x: i32,
+    orig_y: i32,
+) -> (f64, f64) {
+    #[cfg(target_os = "windows")]
+    {
+        for m in mappings {
+            if m.contains_phys(cx, cy) {
+                return m.to_logical(cx, cy);
+            }
+        }
+        if let Some(m) = mappings.first() {
+            return m.to_logical(cx, cy);
+        }
+    }
+    let _ = mappings;
+    (cx - orig_x as f64, cy - orig_y as f64)
+}
+
+fn map_dock_to_logical(
+    wx: f64,
+    wy: f64,
+    ww: f64,
+    wh: f64,
+    mappings: &[MonitorMapping],
+    orig_x: i32,
+    orig_y: i32,
+) -> (f64, f64, f64, f64) {
+    #[cfg(target_os = "windows")]
+    {
+        for m in mappings {
+            if m.contains_phys(wx, wy) {
+                let (lx, ly) = m.to_logical(wx, wy);
+                return (lx, ly, ww / m.sf, wh / m.sf);
+            }
+        }
+        if let Some(m) = mappings.first() {
+            let (lx, ly) = m.to_logical(wx, wy);
+            return (lx, ly, ww / m.sf, wh / m.sf);
+        }
+    }
+    let _ = mappings;
+    (wx - orig_x as f64, wy - orig_y as f64, ww, wh)
 }
 
 struct DragState {
@@ -225,14 +273,26 @@ fn build_ui(app: &Application) {
     let (orig_x, orig_y, total_w, total_h) = union_bounds(&monitors);
 
     let mut screens = Vec::with_capacity(monitors.len());
+    let mut monitor_mappings = Vec::with_capacity(monitors.len());
     for m in &monitors {
         let g = m.geometry();
-        screens.push(ScreenRect::new(
+        let sf = m.scale_factor().max(1) as f64;
+        let s = ScreenRect::new(
             (g.x() - orig_x) as f64,
             (g.y() - orig_y) as f64,
             g.width() as f64,
             g.height() as f64,
+        );
+        monitor_mappings.push(MonitorMapping::new(
+            g.x() as f64 * sf,
+            g.y() as f64 * sf,
+            g.width() as f64 * sf,
+            g.height() as f64 * sf,
+            s.x,
+            s.y,
+            sf,
         ));
+        screens.push(s);
     }
 
     if debug {
@@ -589,6 +649,7 @@ fn build_ui(app: &Application) {
         let areas = areas.clone();
         let overlay_windows = overlay_windows.clone();
         let screens = screens.clone();
+        let monitor_mappings = monitor_mappings.clone();
         let drag_state = drag_state.clone();
 
         let mut rest: i32 = 0;
@@ -666,8 +727,7 @@ fn build_ui(app: &Application) {
                 let c = cursor.lock().unwrap();
                 let mut ds = drag_state.borrow_mut();
                 if c.valid && c.left_down {
-                    let gx = c.x - orig_x as f64;
-                    let gy = c.y - orig_y as f64;
+                    let (gx, gy) = map_cursor_to_logical(c.x, c.y, &monitor_mappings, orig_x, orig_y);
                     if !ds.dragging {
                         if pet.borrow().hit_test(gx, gy) {
                             ds.dragging = true;
@@ -744,7 +804,8 @@ fn build_ui(app: &Application) {
                 let c = cursor.lock().unwrap();
                 if c.valid {
                     behavior = "souris";
-                    let pt = util::clamp_to_screens(c.x - orig_x as f64 - half, c.y - orig_y as f64 - half, size, size, &screens);
+                    let (gx, gy) = map_cursor_to_logical(c.x, c.y, &monitor_mappings, orig_x, orig_y);
+                    let pt = util::clamp_to_screens(gx - half, gy - half, size, size, &screens);
                     (pt.0 + half, pt.1 + half)
                 } else {
                     behavior = "souris";
@@ -762,11 +823,12 @@ fn build_ui(app: &Application) {
                     _ => {}
                 }
 
-                if let Some((wx, wy, ww, wh)) = docked {
-                    let dock_y = (wy + wh) - size - orig_y as f64;
-                    let top_y = wy - orig_y as f64 + half;
-                    let left_x = wx - orig_x as f64 + half;
-                    let right_x = (wx + ww - orig_x as f64 - half).max(left_x);
+                if let Some((raw_wx, raw_wy, raw_ww, raw_wh)) = docked {
+                    let (wx, wy, ww, wh) = map_dock_to_logical(raw_wx, raw_wy, raw_ww, raw_wh, &monitor_mappings, orig_x, orig_y);
+                    let dock_y = (wy + wh) - size;
+                    let top_y = wy + half;
+                    let left_x = wx + half;
+                    let right_x = (wx + ww - half).max(left_x);
 
                     let mut next_routine: Option<Routine> = None;
                     let target = match &mut routine {
@@ -898,7 +960,8 @@ fn build_ui(app: &Application) {
                 let f = focus.lock().unwrap();
                 d.dock = (f.valid && mode == "Autonome").then(|| {
                     let rem = DOCK_DELAY.saturating_sub(f.since.elapsed()).as_secs() as i64;
-                    (f.x, f.y, f.w, f.h, rem)
+                    let (wx, wy, ww, wh) = map_dock_to_logical(f.x, f.y, f.w, f.h, &monitor_mappings, orig_x, orig_y);
+                    (wx, wy, ww, wh, rem)
                 });
             }
 
