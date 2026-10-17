@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use gtk::gdk_pixbuf::Pixbuf;
-use tray_icon::{TrayIconBuilder, Icon, menu::{Menu, MenuItem, MenuEvent}};
+use tray_icon::{TrayIconBuilder, Icon, menu::{Menu, MenuItem, MenuEvent, PredefinedMenuItem, Submenu}};
 use crate::config::Control;
 
 pub fn spawn(
@@ -36,24 +36,41 @@ pub fn spawn(
 
     let menu = Menu::new();
     let opt_item = MenuItem::new(crate::i18n::t("options").to_string(), true, None);
+
+    let mode_sub = Submenu::new(crate::i18n::t("mode").to_string(), true);
+    let mode_pelote = MenuItem::new(crate::i18n::t("mode_pelote").to_string(), true, None);
+    let mode_auto = MenuItem::new(crate::i18n::t("mode_autonome").to_string(), true, None);
+    let mode_mouse = MenuItem::new(crate::i18n::t("mode_souris").to_string(), true, None);
+    let mode_sleep = MenuItem::new(crate::i18n::t("mode_sommeil").to_string(), true, None);
+    let _ = mode_sub.append(&mode_pelote);
+    let _ = mode_sub.append(&mode_auto);
+    let _ = mode_sub.append(&mode_mouse);
+    let _ = mode_sub.append(&mode_sleep);
+
     let quit_item = MenuItem::new(crate::i18n::t("quit").to_string(), true, None);
-    
+
     let _ = menu.append(&opt_item);
+    let _ = menu.append(&mode_sub);
+    let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&quit_item);
 
     let mut builder = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("NekoLand");
-    
+
     if let Some(ic) = icon {
         builder = builder.with_icon(ic);
     }
-    
+
     let tray_icon = builder.build().expect("Failed to build tray icon");
     Box::leak(Box::new(tray_icon));
 
     let opt_id = opt_item.id().clone();
     let quit_id = quit_item.id().clone();
+    let p_id = mode_pelote.id().clone();
+    let a_id = mode_auto.id().clone();
+    let m_id = mode_mouse.id().clone();
+    let s_id = mode_sleep.id().clone();
 
     gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
@@ -62,6 +79,22 @@ pub fn spawn(
                 c.open_config += 1;
             } else if event.id == quit_id {
                 std::process::exit(0);
+            } else if event.id == p_id {
+                let mut c = control.lock().unwrap();
+                c.mode = "Pelote".to_string();
+                c.version += 1;
+            } else if event.id == a_id {
+                let mut c = control.lock().unwrap();
+                c.mode = "Autonome".to_string();
+                c.version += 1;
+            } else if event.id == m_id {
+                let mut c = control.lock().unwrap();
+                c.mode = "Souris".to_string();
+                c.version += 1;
+            } else if event.id == s_id {
+                let mut c = control.lock().unwrap();
+                c.mode = "Sommeil".to_string();
+                c.version += 1;
             }
         }
         gtk::glib::ControlFlow::Continue

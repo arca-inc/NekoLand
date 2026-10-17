@@ -1,11 +1,10 @@
 //! Réglages persistants : `~/.config/neko-desktop/config.json`.
 //!
-//! Chargé au démarrage, réécrit dès qu'un réglage change (via le menu tray).
+//! Chargé au démarrage, réécrit dès qu'un réglage change (via le menu tray ou dashboard).
 //! Les variables d'environnement `NEKO_SKIN`, `NEKO_TOY`, `NEKO_SCALE`,
-//! `NEKO_TWITCH_CHANNEL` ont priorité sur le fichier (pratique pour tester).
+//! `NEKO_TWITCH_CHANNEL`, `NEKO_LANG` ont priorité sur le fichier (pratique pour tester).
 
 use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -14,9 +13,11 @@ pub struct Config {
     pub skin: String,
     pub toy: String,
     pub scale: f64,
-    /// Comportement : "Pelote", "Autonome" ou "Sommeil".
+    /// Comportement : "Pelote", "Autonome", "Souris" ou "Sommeil".
     pub mode: String,
     pub twitch_channel: String,
+    /// Langue : "fr", "en", "de" ou "" (auto-détecté).
+    pub lang: String,
 }
 
 impl Default for Config {
@@ -27,6 +28,7 @@ impl Default for Config {
             scale: 1.5,
             mode: "Pelote".into(),
             twitch_channel: String::new(),
+            lang: String::new(),
         }
     }
 }
@@ -37,7 +39,7 @@ pub fn config_path() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        // Sur Windows, HOME n'est pas défini ; on utilise APPDATA à la place.
+        // Sur Windows, on utilise APPDATA.
         if let Ok(appdata) = std::env::var("APPDATA") {
             return PathBuf::from(appdata).join("neko-desktop").join("config.json");
         }
@@ -71,6 +73,9 @@ pub fn load() -> Config {
     if let Ok(v) = std::env::var("NEKO_TWITCH_CHANNEL") {
         cfg.twitch_channel = v;
     }
+    if let Ok(v) = std::env::var("NEKO_LANG") {
+        cfg.lang = v;
+    }
     cfg
 }
 
@@ -83,6 +88,7 @@ pub struct Control {
     pub scale: f64,
     pub mode: String,
     pub twitch_channel: String,
+    pub lang: String,
     /// Bumpé à chaque changement de réglage (déclenche le reload côté GTK).
     pub version: u64,
     /// Bumpé quand le tray demande l'ouverture de l'éditeur de sprites.
@@ -97,6 +103,7 @@ impl Control {
             scale: c.scale,
             mode: c.mode.clone(),
             twitch_channel: c.twitch_channel.clone(),
+            lang: c.lang.clone(),
             version: 0,
             open_config: 0,
         }
@@ -109,6 +116,7 @@ impl Control {
             scale: self.scale,
             mode: self.mode.clone(),
             twitch_channel: self.twitch_channel.clone(),
+            lang: self.lang.clone(),
         }
     }
 }
@@ -130,4 +138,3 @@ pub fn save(cfg: &Config) {
         Err(e) => eprintln!("[neko] échec sérialisation config : {e}"),
     }
 }
-

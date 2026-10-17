@@ -3,10 +3,8 @@
 //! `ksni` lance son propre thread D-Bus, indépendant de la boucle GTK.
 
 use std::sync::{Arc, Mutex};
-
 use gtk::gdk_pixbuf::Pixbuf;
 use ksni::{Icon, MenuItem, Tray};
-
 use crate::config::Control;
 
 struct NekoTray {
@@ -15,10 +13,15 @@ struct NekoTray {
 }
 
 impl NekoTray {
-    /// Demande à la boucle GTK d'ouvrir le dashboard de configuration.
     fn request_config(&self) {
         let mut c = self.control.lock().unwrap();
         c.open_config += 1;
+    }
+
+    fn set_mode(&self, mode: &str) {
+        let mut c = self.control.lock().unwrap();
+        c.mode = mode.to_string();
+        c.version += 1;
     }
 }
 
@@ -30,20 +33,51 @@ impl Tray for NekoTray {
         "NekoLand".into()
     }
     fn icon_name(&self) -> String {
-        "".into() // empty string forces the host to use icon_pixmap
+        "".into()
     }
     fn icon_pixmap(&self) -> Vec<Icon> {
         self.icon.clone()
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
-        use ksni::menu::StandardItem;
+        use ksni::menu::{StandardItem, SubMenu};
 
         vec![
             StandardItem {
                 label: crate::i18n::t("options").into(),
                 icon_name: "preferences-system".into(),
                 activate: Box::new(|t: &mut NekoTray| t.request_config()),
+                ..Default::default()
+            }
+            .into(),
+            SubMenu {
+                label: crate::i18n::t("mode").into(),
+                submenu: vec![
+                    StandardItem {
+                        label: crate::i18n::t("mode_pelote").into(),
+                        activate: Box::new(|t: &mut NekoTray| t.set_mode("Pelote")),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StandardItem {
+                        label: crate::i18n::t("mode_autonome").into(),
+                        activate: Box::new(|t: &mut NekoTray| t.set_mode("Autonome")),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StandardItem {
+                        label: crate::i18n::t("mode_souris").into(),
+                        activate: Box::new(|t: &mut NekoTray| t.set_mode("Souris")),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StandardItem {
+                        label: crate::i18n::t("mode_sommeil").into(),
+                        activate: Box::new(|t: &mut NekoTray| t.set_mode("Sommeil")),
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
                 ..Default::default()
             }
             .into(),
@@ -58,7 +92,6 @@ impl Tray for NekoTray {
     }
 }
 
-/// Lance le tray. `sprite` fabrique l'icône.
 pub fn spawn(
     sprite: Option<&Pixbuf>,
     _skins: Vec<String>,
@@ -75,7 +108,6 @@ pub fn spawn(
     ksni::TrayService::new(tray).spawn();
 }
 
-/// Convertit la tuile (0,0) — la pose idle — en icône ARGB32 attendue par SNI.
 fn icon_from_tile(sheet: &Pixbuf) -> Icon {
     let tile = sheet.new_subpixbuf(0, 0, 32, 32);
     let w = tile.width();
@@ -92,7 +124,6 @@ fn icon_from_tile(sheet: &Pixbuf) -> Icon {
             let g = pixels[i + 1];
             let b = pixels[i + 2];
             let a = if nch == 4 { pixels[i + 3] } else { 255 };
-            // SNI attend de l'ARGB32 en ordre réseau (gros-boutiste) : A, R, G, B.
             data.extend_from_slice(&[a, r, g, b]);
         }
     }
