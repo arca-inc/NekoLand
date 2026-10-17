@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
+use crate::util::{clamp_to_screens, ScreenRect};
 
 /// Pas de la grille du sprite-sheet oneko en pixels (tuile 32 px + 1 px de marge).
 pub const GRID_STRIDE: i32 = 33;
@@ -75,6 +76,8 @@ impl Default for Sprites {
 pub enum State {
     /// Chasse une cible.
     Chase,
+    /// En cours de déplacement manuel (drag à la souris).
+    Dragged,
 }
 
 pub struct Pet {
@@ -88,13 +91,23 @@ pub struct Pet {
     loop_counter: usize,
     current: &'static str,
     sprites: Sprites,
+    screens: Vec<ScreenRect>,
+    pub is_dragged: bool,
 }
 
 impl Pet {
-    pub fn new(bounds_w: f64, bounds_h: f64, sprite: f64, sprites: Sprites) -> Self {
+    pub fn new(bounds_w: f64, bounds_h: f64, sprite: f64, sprites: Sprites, screens: Vec<ScreenRect>) -> Self {
+        let init_x = bounds_w / 2.0;
+        let init_y = bounds_h / 2.0;
+        let (x, y) = if !screens.is_empty() {
+            clamp_to_screens(init_x, init_y, sprite, sprite, &screens)
+        } else {
+            (init_x, init_y)
+        };
+
         Pet {
-            x: bounds_w / 2.0,
-            y: bounds_h / 2.0,
+            x,
+            y,
             bounds_w,
             bounds_h,
             sprite,
@@ -102,7 +115,65 @@ impl Pet {
             loop_counter: 0,
             current: IDLE,
             sprites,
+            screens,
+            is_dragged: false,
         }
+    }
+
+    /// Met à jour les écrans physiques connus pour le confinement strict.
+    pub fn set_screens(&mut self, screens: Vec<ScreenRect>) {
+        self.screens = screens;
+        self.ensure_on_screen();
+    }
+
+    /// Vérifie et garantit que le chat se trouve actuellement sur un écran actif.
+    pub fn ensure_on_screen(&mut self) {
+        if !self.screens.is_empty() {
+            let (cx, cy) = clamp_to_screens(self.x, self.y, self.sprite, self.sprite, &self.screens);
+            self.x = cx;
+            self.y = cy;
+        } else {
+            self.x = self.x.clamp(0.0, self.max_x());
+            self.y = self.y.clamp(0.0, self.max_y());
+        }
+    }
+
+    /// Vérifie si un clic / pointeur (gx, gy) touche la hitbox du chat.
+    pub fn hit_test(&self, gx: f64, gy: f64) -> bool {
+        // Marge de tolérance de 10px autour du sprite pour une saisie tactile/souris agréable
+        let pad = 10.0;
+        gx >= (self.x - pad)
+            && gx <= (self.x + self.sprite + pad)
+            && gy >= (self.y - pad)
+            && gy <= (self.y + self.sprite + pad)
+    }
+
+    /// Début du drag à la souris.
+    pub fn start_drag(&mut self) {
+        self.is_dragged = true;
+        self.sleep_counter = 0;
+        self.current = ALERT;
+    }
+
+    /// Met à jour la position du chat pendant le drag manuel.
+    pub fn drag_to(&mut self, new_x: f64, new_y: f64) {
+        if !self.screens.is_empty() {
+            let (cx, cy) = clamp_to_screens(new_x, new_y, self.sprite, self.sprite, &self.screens);
+            self.x = cx;
+            self.y = cy;
+        } else {
+            self.x = new_x.clamp(0.0, self.max_x());
+            self.y = new_y.clamp(0.0, self.max_y());
+        }
+        self.sleep_counter = 0;
+        self.current = ALERT;
+    }
+
+    /// Fin du drag à la souris : le chat atterrit au sol.
+    pub fn end_drag(&mut self) {
+        self.is_dragged = false;
+        self.sleep_counter = 0;
+        self.current = ALERT;
     }
 
     /// Borne supérieure atteignable pour le coin haut-gauche du sprite.
@@ -122,6 +193,7 @@ impl Pet {
     /// Met à jour la taille du sprite à l'écran (changement d'échelle à chaud).
     pub fn set_sprite_size(&mut self, sprite: f64) {
         self.sprite = sprite;
+        self.ensure_on_screen();
     }
 
     /// Nom de l'animation en cours (pour le debug visuel).
@@ -136,7 +208,6 @@ impl Pet {
 
     /// Réveille le chat en sursaut : remet le compteur à zéro → séquence
     /// alert → scratchSelf → tired → sleeping recommence depuis le début.
-    /// N'a aucun effet si le chat est déjà éveillé ou en mouvement.
     pub fn startle(&mut self) {
         if self.sleep_counter > 10 {
             self.sleep_counter = 0;
@@ -153,8 +224,16 @@ impl Pet {
 
     /// Avance d'un tick. `target` = cible à chasser en pixels écran.
     pub fn update(&mut self, target: (f64, f64), state: State) {
+        if self.is_dragged {
+            // Pendant le drag, la position est pilotée manuellement
+            let len = self.sprites.frames(self.current).len().max(1);
+            self.loop_counter = (self.loop_counter + 1) % len;
+            return;
+        }
+
         match state {
             State::Chase => self.move_toward(target.0, target.1),
+            State::Dragged => {}
         }
 
         let len = self.sprites.frames(self.current).len().max(1);
@@ -175,15 +254,19 @@ impl Pet {
         let distance = (delta_x * delta_x + delta_y * delta_y).sqrt();
 
         if distance <= 32.0 {
-            // Arrivé : gratte un bord s'il est collé à un mur, sinon s'installe
-            // (alerte → toilette → fatigue → sommeil).
-            if self.x <= 0.0 {
+            // Arrivé : s'il est au bord de l'écran, gratte le mur, sinon s'installe
+            let at_left = self.x <= 4.0;
+            let at_top = self.y <= 4.0;
+            let at_right = self.x >= self.max_x() - 4.0;
+            let at_bottom = self.y >= self.max_y() - 4.0;
+
+            if at_left {
                 self.current = SCRATCH_WALL_W;
-            } else if self.y <= 0.0 {
-                self.current = SCRATCH_WALL_N;
-            } else if self.x >= self.max_x() {
+            } else if at_right {
                 self.current = SCRATCH_WALL_E;
-            } else if self.y >= self.max_y() {
+            } else if at_top {
+                self.current = SCRATCH_WALL_N;
+            } else if at_bottom {
                 self.current = SCRATCH_WALL_S;
             } else {
                 self.sleep_counter += 1;
@@ -196,8 +279,17 @@ impl Pet {
             }
         } else {
             self.sleep_counter = 0;
-            self.x = (self.x + theta.cos() * STEP).clamp(0.0, self.max_x());
-            self.y = (self.y - theta.sin() * STEP).clamp(0.0, self.max_y());
+            let cand_x = self.x + theta.cos() * STEP;
+            let cand_y = self.y - theta.sin() * STEP;
+
+            if !self.screens.is_empty() {
+                let (cx, cy) = clamp_to_screens(cand_x, cand_y, self.sprite, self.sprite, &self.screens);
+                self.x = cx;
+                self.y = cy;
+            } else {
+                self.x = cand_x.clamp(0.0, self.max_x());
+                self.y = cand_y.clamp(0.0, self.max_y());
+            }
 
             // theta : 0 = droite (E), π/2 = haut (N), repère y inversé.
             self.current = match theta {
