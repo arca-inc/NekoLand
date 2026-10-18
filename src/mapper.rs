@@ -129,7 +129,12 @@ const ANIMS: &[&str] = &[
     "scratchWallW", "scratchWallE", "N", "NE", "E", "SE", "S", "SW", "W", "NW",
 ];
 
-const MODES: &[&str] = &["Pelote", "Autonome", "Souris", "Sommeil"];
+const MODES: &[(&str, &str)] = &[
+    ("mode_pelote", "Pelote"),
+    ("mode_autonome", "Autonome"),
+    ("mode_souris", "Souris"),
+    ("mode_sommeil", "Sommeil"),
+];
 const SCALES: &[(&str, f64)] = &[("1.0x", 1.0), ("1.5x", 1.5), ("2.0x", 2.0), ("3.0x", 3.0)];
 const LANGS: &[(&str, &str)] = &[("Français", "fr"), ("English", "en"), ("Deutsch", "de")];
 
@@ -570,9 +575,11 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     lbl_mode.set_hexpand(true);
     lbl_mode.set_halign(gtk::Align::Start);
 
-    let mode_list = StringList::new(MODES);
-    let mode_drop = DropDown::new(Some(mode_list), gtk::Expression::NONE);
-    if let Some(pos) = MODES.iter().position(|&m| m == initial_mode) {
+    let mode_labels: Vec<String> = MODES.iter().map(|(key, _)| crate::i18n::t(key)).collect();
+    let mode_labels_ref: Vec<&str> = mode_labels.iter().map(|s| s.as_str()).collect();
+    let mode_list = StringList::new(&mode_labels_ref);
+    let mode_drop = DropDown::new(Some(mode_list.clone()), gtk::Expression::NONE);
+    if let Some(pos) = MODES.iter().position(|(_, m)| *m == initial_mode) {
         mode_drop.set_selected(pos as u32);
     }
     row_mode.append(&lbl_mode);
@@ -822,7 +829,8 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     let anim_list = gtk::ListBox::new();
     for anim in ANIMS {
         let row = gtk::ListBoxRow::new();
-        let lbl = Label::new(Some(anim));
+        let display = format!("{} ({})", anim, crate::i18n::translate_clip(anim));
+        let lbl = Label::new(Some(&display));
         lbl.set_halign(gtk::Align::Start);
         row.set_child(Some(&lbl));
         anim_list.append(&row);
@@ -927,7 +935,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             let idx = drop.selected() as usize;
             if idx < MODES.len() {
                 let mut ctrl = control.lock().unwrap();
-                ctrl.mode = MODES[idx].to_string();
+                ctrl.mode = MODES[idx].1.to_string();
                 ctrl.version += 1;
             }
         });
@@ -971,6 +979,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
 
     {
         let control = control.clone();
+        let mode_list = mode_list.clone();
         lang_drop.connect_selected_notify(move |drop| {
             let idx = drop.selected() as usize;
             if idx < LANGS.len() {
@@ -979,6 +988,12 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
                 let mut ctrl = control.lock().unwrap();
                 ctrl.lang = code.to_string();
                 ctrl.version += 1;
+
+                // Rafraîchir les libellés traduits des modes de comportement
+                for (i, (key, _)) in MODES.iter().enumerate() {
+                    let text = crate::i18n::t(key);
+                    mode_list.splice(i as u32, 1, &[&text]);
+                }
             }
         });
     }

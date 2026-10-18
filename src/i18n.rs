@@ -210,23 +210,140 @@ pub fn t(key: &str) -> String {
         // Modes
         "mode_pelote" => match lang {
             2 => "Pelote (Jeu)",
-            3 => "Wollknäuel",
+            3 => "Wollknäuel (Spiel)",
             _ => "Yarn Ball (Play)",
         },
         "mode_autonome" => match lang {
             2 => "Autonome (Errance)",
-            3 => "Autonom",
+            3 => "Autonom (Streunen)",
             _ => "Autonomous (Wander)",
         },
         "mode_souris" => match lang {
             2 => "Souris (Chasseur)",
-            3 => "Mauszeiger",
+            3 => "Mauszeiger (Jäger)",
             _ => "Mouse (Chase pointer)",
         },
         "mode_sommeil" => match lang {
             2 => "Sommeil (Sieste)",
-            3 => "Schlafen",
+            3 => "Schlafen (Nickerchen)",
             _ => "Sleep (Nap)",
+        },
+        // Comportements détaillés (Behaviors)
+        "behavior_drag" => match lang {
+            2 => "Déplacement",
+            3 => "Verschieben",
+            _ => "Dragging",
+        },
+        "behavior_twitch" => match lang {
+            2 => "Clic Twitch",
+            3 => "Twitch-Klick",
+            _ => "Twitch Click",
+        },
+        "behavior_sommeil" => match lang {
+            2 => "Sommeil",
+            3 => "Schlafend",
+            _ => "Sleeping",
+        },
+        "behavior_souris" => match lang {
+            2 => "Chasse souris",
+            3 => "Maus-Jagd",
+            _ => "Chasing Mouse",
+        },
+        "behavior_perimetre" => match lang {
+            2 => "Tour de fenêtre",
+            3 => "Fensterumfang",
+            _ => "Window Perimeter",
+        },
+        "behavior_dock" => match lang {
+            2 => "Bordure de fenêtre",
+            3 => "Fenster-Dock",
+            _ => "Window Dock",
+        },
+        "behavior_sieste" => match lang {
+            2 => "Sieste au panier",
+            3 => "Körbchen-Schlaf",
+            _ => "Basket Nap",
+        },
+        "behavior_zoomies" => match lang {
+            2 => "Coup de folie (Zoomies)",
+            3 => "Zoomies (Tollerei)",
+            _ => "Zoomies",
+        },
+        "behavior_errance" => match lang {
+            2 => "Balade libre",
+            3 => "Umherwandern",
+            _ => "Wandering",
+        },
+        "behavior_chasse" => match lang {
+            2 => "Chasse au jouet",
+            3 => "Spielzeug-Jagd",
+            _ => "Toy Chase",
+        },
+        "behavior_repos" => match lang {
+            2 => "Pause / Repos",
+            3 => "Ausruhen",
+            _ => "Resting",
+        },
+        "behavior_attente" => match lang {
+            2 => "Attente",
+            3 => "Warten",
+            _ => "Idle / Waiting",
+        },
+        // Animations et postures (Clips)
+        "clip_idle" => match lang {
+            2 => "Immobile",
+            3 => "Stillstehend",
+            _ => "Idle",
+        },
+        "clip_alert" => match lang {
+            2 => "Alerte",
+            3 => "Aufmerksam",
+            _ => "Alert",
+        },
+        "clip_tired" => match lang {
+            2 => "Fatigué",
+            3 => "Müde",
+            _ => "Tired",
+        },
+        "clip_sleeping" => match lang {
+            2 => "Endormi",
+            3 => "Schlafend",
+            _ => "Sleeping",
+        },
+        "clip_scratchSelf" => match lang {
+            2 => "Toilette",
+            3 => "Putzend",
+            _ => "Grooming",
+        },
+        "clip_scratchWallN" => match lang {
+            2 => "Grattage (Haut)",
+            3 => "Kratzen (Oben)",
+            _ => "Scratching (Up)",
+        },
+        "clip_scratchWallS" => match lang {
+            2 => "Grattage (Bas)",
+            3 => "Kratzen (Unten)",
+            _ => "Scratching (Down)",
+        },
+        "clip_scratchWallW" => match lang {
+            2 => "Grattage (Gauche)",
+            3 => "Kratzen (Links)",
+            _ => "Scratching (Left)",
+        },
+        "clip_scratchWallE" => match lang {
+            2 => "Grattage (Droite)",
+            3 => "Kratzen (Rechts)",
+            _ => "Scratching (Right)",
+        },
+        "dock_in" => match lang {
+            2 => "Accrochage dans",
+            3 => "Andocken in",
+            _ => "Docking in",
+        },
+        "docked" => match lang {
+            2 => "● ACCROCHÉ",
+            3 => "● ANGEDOCKT",
+            _ => "● DOCKED",
         },
         // Descriptions & hints
         "drag_hint" => match lang {
@@ -323,4 +440,41 @@ pub fn t(key: &str) -> String {
         _ => key,
     };
     text.to_string()
+}
+
+/// Traduit un identifiant de comportement interne pour l'affichage utilisateur / debug.
+pub fn translate_behavior(behavior: &str) -> String {
+    let key = match behavior {
+        "drag" => "behavior_drag",
+        "twitch" => "behavior_twitch",
+        "sommeil" => "behavior_sommeil",
+        "souris" => "behavior_souris",
+        "périmètre" => "behavior_perimetre",
+        "dock" => "behavior_dock",
+        "sieste" => "behavior_sieste",
+        "zoomies" => "behavior_zoomies",
+        "errance" => "behavior_errance",
+        "chasse" => "behavior_chasse",
+        "repos" => "behavior_repos",
+        "attente" => "behavior_attente",
+        _ => return behavior.to_string(),
+    };
+    t(key)
+}
+
+/// Traduit un nom de clip d'animation pour l'affichage utilisateur.
+pub fn translate_clip(clip: &str) -> String {
+    let key = match clip {
+        "idle" => "clip_idle",
+        "alert" => "clip_alert",
+        "tired" => "clip_tired",
+        "sleeping" => "clip_sleeping",
+        "scratchSelf" => "clip_scratchSelf",
+        "scratchWallN" => "clip_scratchWallN",
+        "scratchWallS" => "clip_scratchWallS",
+        "scratchWallW" => "clip_scratchWallW",
+        "scratchWallE" => "clip_scratchWallE",
+        _ => return clip.to_string(),
+    };
+    t(key)
 }

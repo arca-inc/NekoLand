@@ -588,15 +588,17 @@ fn build_ui(app: &Application) {
                     cr.set_source_rgba(0.3, 1.0, 0.5, 0.95);
                     cr.set_font_size(13.0);
                     cr.move_to(cx + half + 4.0, cy - half - 4.0);
-                    let _ = cr.show_text(&format!("{} · {}", d.behavior, p.current_clip()));
+                    let beh_name = crate::i18n::translate_behavior(d.behavior);
+                    let clip_name = crate::i18n::translate_clip(p.current_clip());
+                    let _ = cr.show_text(&format!("{} · {}", beh_name, clip_name));
 
                     if let Some((wx, wy, ww, _wh, rem)) = d.dock {
                         let rx = wx + ww - off_x;
                         let ry = wy - off_y;
                         let label = if rem > 0 {
-                            format!("dock dans {rem}s")
+                            format!("{} {rem}s", crate::i18n::t("dock_in"))
                         } else {
-                            "● DOCK".to_string()
+                            crate::i18n::t("docked")
                         };
                         cr.set_font_size(13.0);
                         let tw = cr.text_extents(&label).map(|e| e.width()).unwrap_or(60.0);
