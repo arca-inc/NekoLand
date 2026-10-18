@@ -1,7 +1,7 @@
-//! Tableau de bord de configuration (Dashboard), natif GTK4 épuré et moderne.
+//! Tableau de bord de configuration (Dashboard), sobre, moderne et adaptatif.
 //!
-//! Permet de configurer le comportement global (mode, apparence, pelote, échelle, langue)
-//! et d'éditer le mapping des sprites du skin actif.
+//! Présente une interface de réglages épurée par défaut, avec l'éditeur de
+//! sprites accessible en mode Avancé, dimensionnée dynamiquement selon l'écran.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -14,8 +14,8 @@ use gtk::gdk::prelude::*;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::{
-    Application, ApplicationWindow, Box as GtkBox, Button, DrawingArea, DropDown, Entry, Grid,
-    Label, Orientation, ScrolledWindow, StringList, CheckButton,
+    Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, DrawingArea, DropDown,
+    Entry, Grid, Label, Orientation, ScrolledWindow, Stack, StackTransitionType, StringList,
 };
 use crate::config::Control;
 
@@ -101,15 +101,13 @@ fn autostart_set(enable: bool) {
         let file = dir.join("nekoland.desktop");
         if enable {
             let _ = std::fs::create_dir_all(&dir);
-            if let Ok(exe) = std::env::current_exe() {
-                let content = format!(
-                    "[Desktop Entry]\nType=Application\nName=NekoLand\nComment=Desktop companion\nExec={}\nIcon=face-smile\nTerminal=false\nCategories=Game;\nX-GNOME-Autostart-enabled=true\n",
-                    exe.display()
-                );
-                let _ = std::fs::write(file, content);
-            }
+            let bin = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "nekoland".into());
+            let content = format!(
+                "[Desktop Entry]\nType=Application\nName=NekoLand\nExec={bin}\nIcon=face-smile\nTerminal=false\nCategories=Game;Utility;\nX-GNOME-Autostart-enabled=true\n"
+            );
+            let _ = std::fs::write(&file, content);
         } else {
-            let _ = std::fs::remove_file(file);
+            let _ = std::fs::remove_file(&file);
         }
     }
 }
@@ -123,7 +121,7 @@ const COLS: i32 = 8;
 const ROWS: i32 = 6;
 const STRIDE: i32 = 33; // tuile 32 + 1px de marge
 const TILE: i32 = 32;
-const CELL: f64 = 2.8; // agrandissement d'une cellule
+const CELL: f64 = 2.6; // taille d'une cellule dans l'éditeur de sprites
 
 const ANIMS: &[&str] = &[
     "idle", "alert", "tired", "sleeping", "scratchSelf", "scratchWallN", "scratchWallS",
@@ -154,9 +152,9 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     let json_path = Rc::new(RefCell::new(assets.join("pets").join(format!("{initial_skin}.json"))));
     let mapping: Rc<RefCell<Mapping>> = Rc::new(RefCell::new(load_or_default(&json_path.borrow())));
     let active: Rc<RefCell<String>> = Rc::new(RefCell::new(ANIMS[0].to_string()));
-
     let sheet = Rc::new(RefCell::new(crate::load_sprite(&assets.join("pets").join(format!("{initial_skin}.png")))));
 
+    // Feuille de style CSS sobre, moderne et épurée
     let provider = gtk::CssProvider::new();
     provider.load_from_data(
         r#"
@@ -165,33 +163,36 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             color: #c9d1d9;
             font-size: 13px;
         }
-        .dashboard .sidebar {
+        .dashboard .card-box {
             background-color: #161b22;
-            border-right: 1px solid #30363d;
-            padding: 24px 20px;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 18px 20px;
+            margin-bottom: 14px;
         }
-        .dashboard .sidebar-title {
-            font-size: 20px;
+        .dashboard .card-title {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            color: #58a6ff;
+            margin-bottom: 12px;
+        }
+        .dashboard .setting-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: #e6edf3;
+        }
+        .dashboard .app-title {
+            font-size: 22px;
             font-weight: 800;
             color: #f0f6fc;
-            margin-bottom: 4px;
         }
-        .dashboard .sidebar-subtitle {
-            font-size: 12px;
+        .dashboard .app-subtitle {
+            font-size: 13px;
             color: #8b949e;
-            margin-bottom: 20px;
-        }
-        .dashboard .section-label {
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.8px;
-            text-transform: uppercase;
-            color: #8b949e;
-            margin-top: 14px;
-            margin-bottom: 6px;
         }
         .dashboard dropdown {
-            margin-bottom: 8px;
             background: transparent;
             border: none;
         }
@@ -201,7 +202,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             color: #f0f6fc;
             border-radius: 8px;
             border: 1px solid #30363d;
-            padding: 8px 12px;
+            padding: 7px 12px;
             min-height: 18px;
             transition: all 0.15s ease;
         }
@@ -215,86 +216,62 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             border-color: #58a6ff;
             box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
         }
-        .dashboard entry {
-            margin-bottom: 8px;
-            caret-color: #58a6ff;
-        }
-        .dashboard entry text { color: #f0f6fc; }
-        .dashboard entry > text > placeholder { color: #6e7681; }
-
-        .dashboard dropdown popover,
-        .dashboard dropdown popover > contents {
-            background-color: #161b22;
-            color: #f0f6fc;
-            border: 1px solid #30363d;
-            border-radius: 10px;
-        }
-        .dashboard dropdown popover row {
-            border-radius: 6px;
-            padding: 7px 10px;
-        }
-        .dashboard dropdown popover row:selected {
-            background-color: #1f6feb;
-            color: #ffffff;
-        }
-        .dashboard checkbutton {
-            color: #c9d1d9;
-            font-size: 12px;
-            margin-top: 8px;
-        }
         .dashboard .hint-banner {
             background-color: rgba(56, 139, 253, 0.1);
-            border: 1px solid rgba(56, 139, 253, 0.3);
+            border: 1px solid rgba(56, 139, 253, 0.25);
             border-radius: 8px;
-            padding: 10px 12px;
-            margin-top: 14px;
-            margin-bottom: 6px;
+            padding: 10px 14px;
             color: #79c0ff;
-            font-size: 11.5px;
-            line-height: 1.4;
+            font-size: 12px;
+            margin-bottom: 14px;
         }
-        .dashboard button.primary-btn {
+        .dashboard .primary-btn {
             background-color: #238636;
             color: #ffffff;
+            font-weight: 600;
             border-radius: 8px;
-            padding: 10px 16px;
-            font-weight: 700;
+            padding: 9px 18px;
             border: 1px solid rgba(240, 246, 252, 0.1);
-            margin-top: 12px;
             transition: all 0.15s ease;
         }
-        .dashboard button.primary-btn:hover {
+        .dashboard .primary-btn:hover {
             background-color: #2ea043;
-            box-shadow: 0 4px 12px rgba(46, 160, 67, 0.3);
         }
-        .dashboard button.close-btn {
-            background-color: transparent;
-            border: 1px solid #30363d;
-            color: #f85149;
+        .dashboard .ghost-btn {
+            background-color: #21262d;
+            color: #c9d1d9;
+            font-weight: 500;
             border-radius: 8px;
             padding: 9px 16px;
-            font-weight: 600;
-            margin-top: 8px;
+            border: 1px solid #30363d;
             transition: all 0.15s ease;
         }
-        .dashboard button.close-btn:hover {
-            background-color: #da3633;
-            border-color: #da3633;
+        .dashboard .ghost-btn:hover {
+            background-color: #30363d;
             color: #ffffff;
+            border-color: #58a6ff;
         }
-        .dashboard .main-area {
-            padding: 24px 28px;
-            background-color: #0d1117;
+        .dashboard .close-btn {
+            background-color: transparent;
+            color: #8b949e;
+            font-weight: 500;
+            border-radius: 8px;
+            padding: 8px 16px;
+            border: 1px solid #30363d;
         }
-        .dashboard .main-title {
-            font-size: 18px;
+        .dashboard .close-btn:hover {
+            background-color: #21262d;
+            color: #f0f6fc;
+        }
+        .dashboard .editor-bar {
+            background-color: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 12px 20px;
+        }
+        .dashboard .editor-title {
+            font-size: 15px;
             font-weight: 700;
             color: #f0f6fc;
-            margin-bottom: 16px;
-        }
-        .dashboard list {
-            background-color: transparent;
-            padding: 2px;
         }
         .dashboard row {
             padding: 8px 12px;
@@ -302,7 +279,6 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             margin-bottom: 3px;
             color: #8b949e;
             font-weight: 500;
-            transition: all 0.1s ease;
         }
         .dashboard row:selected {
             background-color: #1f6feb;
@@ -313,16 +289,28 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             background-color: #21262d;
             color: #c9d1d9;
         }
-        .dashboard .credits-label {
-            font-size: 11px;
-            color: #6e7681;
-            margin-top: 14px;
-        }
         "#,
     );
 
     let display = gtk::gdk::Display::default().unwrap();
     gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    // Calcul de la taille de fenêtre réactive au moniteur actuel
+    let (mon_w, mon_h) = {
+        let monitors = display.monitors();
+        if let Some(m) = monitors.item(0).and_then(|o| o.downcast::<gtk::gdk::Monitor>().ok()) {
+            let g = m.geometry();
+            (g.width(), g.height())
+        } else {
+            (1920, 1080)
+        }
+    };
+
+    let settings_w = (mon_w as f64 * 0.30).clamp(460.0, 560.0) as i32;
+    let settings_h = (mon_h as f64 * 0.68).clamp(540.0, 720.0) as i32;
+
+    let editor_w = (mon_w as f64 * 0.65).clamp(840.0, 1140.0) as i32;
+    let editor_h = (mon_h as f64 * 0.75).clamp(620.0, 850.0) as i32;
 
     let window = ApplicationWindow::builder()
         .application(app)
@@ -331,67 +319,100 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     window.add_css_class("dashboard");
     window.set_decorated(true);
     window.set_resizable(true);
-    window.set_default_size(960, 680);
+    window.set_default_size(settings_w, settings_h);
 
-    let root = GtkBox::new(Orientation::Horizontal, 0);
+    let stack = Stack::new();
+    stack.set_transition_type(StackTransitionType::SlideLeftRight);
+    stack.set_transition_duration(200);
 
-    // ==========================================
-    // SIDEBAR (Paramètres généraux)
-    // ==========================================
-    let sidebar = GtkBox::new(Orientation::Vertical, 0);
-    sidebar.add_css_class("sidebar");
-    sidebar.set_size_request(310, -1);
+    // =========================================================================
+    // VUE 1 : PARAMÈTRES ÉPURÉS (Page principale)
+    // =========================================================================
+    let page_settings = ScrolledWindow::new();
+    page_settings.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    page_settings.set_hexpand(true);
+    page_settings.set_vexpand(true);
 
-    let sidebar_scroll = ScrolledWindow::new();
-    sidebar_scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    sidebar_scroll.set_hexpand(false);
-    sidebar_scroll.set_vexpand(true);
+    let settings_box = GtkBox::new(Orientation::Vertical, 16);
+    settings_box.set_margin_start(24);
+    settings_box.set_margin_end(24);
+    settings_box.set_margin_top(20);
+    settings_box.set_margin_bottom(20);
 
-    let sidebar_content = GtkBox::new(Orientation::Vertical, 0);
+    // Header avec aperçu animé
+    let header_box = GtkBox::new(Orientation::Horizontal, 16);
+    header_box.set_valign(gtk::Align::Center);
 
-    let app_title = Label::new(Some(&crate::i18n::t("app_title")));
-    app_title.add_css_class("sidebar-title");
+    let mini_preview = DrawingArea::new();
+    mini_preview.set_content_width(64);
+    mini_preview.set_content_height(64);
+    let mini_tick = Rc::new(RefCell::new(0usize));
+    {
+        let sheet = sheet.clone();
+        let mapping = mapping.clone();
+        let mini_tick = mini_tick.clone();
+        mini_preview.set_draw_func(move |_a, cr, w, h| {
+            rounded_rect(cr, 0.0, 0.0, w as f64, h as f64, 12.0);
+            cr.set_source_rgb(0.09, 0.12, 0.16);
+            let _ = cr.fill();
+
+            if let Some(s) = sheet.borrow().as_ref() {
+                let m = mapping.borrow();
+                let frames = m.get("idle").or_else(|| m.get("alert")).and_then(|f| if f.is_empty() { None } else { Some(f) });
+                if let Some(f) = frames {
+                    let tick = *mini_tick.borrow();
+                    let (fc, fr) = f[tick % f.len()];
+                    if fr * STRIDE + TILE <= s.height() && fc * STRIDE + TILE <= s.width() {
+                        let sub = s.new_subpixbuf(fc * STRIDE, fr * STRIDE, TILE, TILE);
+                        let _ = cr.save();
+                        cr.translate((w as f64 - TILE as f64 * 1.6) / 2.0, (h as f64 - TILE as f64 * 1.6) / 2.0);
+                        cr.scale(1.6, 1.6);
+                        cr.set_source_pixbuf(&sub, 0.0, 0.0);
+                        let _ = cr.paint();
+                        let _ = cr.restore();
+                    }
+                }
+            }
+        });
+    }
+    header_box.append(&mini_preview);
+
+    let title_box = GtkBox::new(Orientation::Vertical, 4);
+    title_box.set_valign(gtk::Align::Center);
+    let app_title = Label::new(Some("NekoLand"));
+    app_title.add_css_class("app-title");
     app_title.set_halign(gtk::Align::Start);
-    sidebar_content.append(&app_title);
-
-    let app_sub = Label::new(Some("NekoLand v0.1.0"));
-    app_sub.add_css_class("sidebar-subtitle");
+    let app_sub = Label::new(Some(&crate::i18n::t("dashboard_title")));
+    app_sub.add_css_class("app-subtitle");
     app_sub.set_halign(gtk::Align::Start);
-    sidebar_content.append(&app_sub);
+    title_box.append(&app_title);
+    title_box.append(&app_sub);
+    header_box.append(&title_box);
+    settings_box.append(&header_box);
 
-    // -- Langue --
-    let l_lang = Label::new(Some(&crate::i18n::t("language")));
-    l_lang.add_css_class("section-label");
-    l_lang.set_halign(gtk::Align::Start);
-    sidebar_content.append(&l_lang);
+    // Bannière d'aide discrète
+    let hint_lbl = Label::new(Some(&crate::i18n::t("drag_hint")));
+    hint_lbl.add_css_class("hint-banner");
+    hint_lbl.set_wrap(true);
+    hint_lbl.set_xalign(0.0);
+    settings_box.append(&hint_lbl);
 
-    let lang_names: Vec<&str> = LANGS.iter().map(|(n, _)| *n).collect();
-    let lang_list = StringList::new(&lang_names);
-    let lang_drop = DropDown::new(Some(lang_list), gtk::Expression::NONE);
-    let cur_l = if initial_lang.is_empty() { crate::i18n::current_lang() } else { initial_lang.as_str() };
-    if let Some(pos) = LANGS.iter().position(|(_, c)| *c == cur_l) {
-        lang_drop.set_selected(pos as u32);
-    }
-    sidebar_content.append(&lang_drop);
+    // --- CARTE 1 : APPARENCE ---
+    let card_app = GtkBox::new(Orientation::Vertical, 12);
+    card_app.add_css_class("card-box");
 
-    // -- Mode --
-    let l_mode = Label::new(Some(&crate::i18n::t("mode")));
-    l_mode.add_css_class("section-label");
-    l_mode.set_halign(gtk::Align::Start);
-    sidebar_content.append(&l_mode);
+    let card_app_title = Label::new(Some(&crate::i18n::t("section_appearance")));
+    card_app_title.add_css_class("card-title");
+    card_app_title.set_halign(gtk::Align::Start);
+    card_app.append(&card_app_title);
 
-    let mode_list = StringList::new(MODES);
-    let mode_drop = DropDown::new(Some(mode_list), gtk::Expression::NONE);
-    if let Some(pos) = MODES.iter().position(|&m| m == initial_mode) {
-        mode_drop.set_selected(pos as u32);
-    }
-    sidebar_content.append(&mode_drop);
-
-    // -- Skin --
-    let l_skin = Label::new(Some(&crate::i18n::t("skin")));
-    l_skin.add_css_class("section-label");
-    l_skin.set_halign(gtk::Align::Start);
-    sidebar_content.append(&l_skin);
+    // Skin dropdown avec vignettes
+    let row_skin = GtkBox::new(Orientation::Horizontal, 12);
+    row_skin.set_valign(gtk::Align::Center);
+    let lbl_skin = Label::new(Some(&crate::i18n::t("skin")));
+    lbl_skin.add_css_class("setting-label");
+    lbl_skin.set_hexpand(true);
+    lbl_skin.set_halign(gtk::Align::Start);
 
     let skins = crate::list_pngs(&assets.join("pets"));
     let skins_ref: Vec<&str> = skins.iter().map(|s| s.as_str()).collect();
@@ -409,12 +430,12 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     }
     let skin_textures = Rc::new(skin_textures);
 
-    let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, obj| {
+    let factory_skin = gtk::SignalListItemFactory::new();
+    factory_skin.connect_setup(|_, obj| {
         let list_item = obj.downcast_ref::<gtk::ListItem>().unwrap();
         let hbox = GtkBox::new(Orientation::Horizontal, 8);
         let img = gtk::Image::new();
-        img.set_pixel_size(24);
+        img.set_pixel_size(22);
         let lbl = Label::new(None);
         hbox.append(&img);
         hbox.append(&lbl);
@@ -422,7 +443,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     });
 
     let skin_textures_bind = skin_textures.clone();
-    factory.connect_bind(move |_, obj| {
+    factory_skin.connect_bind(move |_, obj| {
         let list_item = obj.downcast_ref::<gtk::ListItem>().unwrap();
         let item = list_item.item().unwrap();
         let string_obj = item.downcast_ref::<gtk::StringObject>().unwrap();
@@ -431,7 +452,6 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         let img = hbox.first_child().unwrap().downcast::<gtk::Image>().unwrap();
         let lbl = img.next_sibling().unwrap().downcast::<Label>().unwrap();
         lbl.set_label(&name);
-
         if let Some(tex) = skin_textures_bind.get(name.as_str()) {
             img.set_paintable(Some(tex));
         } else {
@@ -440,42 +460,45 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     });
 
     let skin_drop = DropDown::new(Some(skin_list), gtk::Expression::NONE);
-    skin_drop.set_factory(Some(&factory));
-    skin_drop.set_list_factory(Some(&factory));
-
+    skin_drop.set_factory(Some(&factory_skin));
+    skin_drop.set_list_factory(Some(&factory_skin));
     if let Some(pos) = skins.iter().position(|s| s == &initial_skin) {
         skin_drop.set_selected(pos as u32);
     }
-    sidebar_content.append(&skin_drop);
+    row_skin.append(&lbl_skin);
+    row_skin.append(&skin_drop);
+    card_app.append(&row_skin);
 
-    // -- Toy --
-    let l_toy = Label::new(Some(&crate::i18n::t("toy")));
-    l_toy.add_css_class("section-label");
-    l_toy.set_halign(gtk::Align::Start);
-    sidebar_content.append(&l_toy);
+    // Jouet / Pelote dropdown
+    let row_toy = GtkBox::new(Orientation::Horizontal, 12);
+    row_toy.set_valign(gtk::Align::Center);
+    let lbl_toy = Label::new(Some(&crate::i18n::t("toy")));
+    lbl_toy.add_css_class("setting-label");
+    lbl_toy.set_hexpand(true);
+    lbl_toy.set_halign(gtk::Align::Start);
 
     let toys = crate::list_pngs(&assets.join("toys"));
     let toys_ref: Vec<&str> = toys.iter().map(|s| s.as_str()).collect();
     let toy_list = StringList::new(&toys_ref);
 
     let mut toy_textures = HashMap::new();
-    for toy in &toys {
-        let path = assets.join("toys").join(format!("{toy}.png"));
+    for toy_name in &toys {
+        let path = assets.join("toys").join(format!("{toy_name}.png"));
         if let Ok(pixbuf) = gtk::gdk_pixbuf::Pixbuf::from_file(&path) {
             if pixbuf.width() >= 32 && pixbuf.height() >= 32 {
                 let sub = pixbuf.new_subpixbuf(0, 0, 32, 32);
-                toy_textures.insert(toy.clone(), gtk::gdk::Texture::for_pixbuf(&sub));
+                toy_textures.insert(toy_name.clone(), gtk::gdk::Texture::for_pixbuf(&sub));
             }
         }
     }
     let toy_textures = Rc::new(toy_textures);
 
-    let toy_factory = gtk::SignalListItemFactory::new();
-    toy_factory.connect_setup(|_, obj| {
+    let factory_toy = gtk::SignalListItemFactory::new();
+    factory_toy.connect_setup(|_, obj| {
         let list_item = obj.downcast_ref::<gtk::ListItem>().unwrap();
         let hbox = GtkBox::new(Orientation::Horizontal, 8);
         let img = gtk::Image::new();
-        img.set_pixel_size(24);
+        img.set_pixel_size(22);
         let lbl = Label::new(None);
         hbox.append(&img);
         hbox.append(&lbl);
@@ -483,7 +506,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     });
 
     let toy_textures_bind = toy_textures.clone();
-    toy_factory.connect_bind(move |_, obj| {
+    factory_toy.connect_bind(move |_, obj| {
         let list_item = obj.downcast_ref::<gtk::ListItem>().unwrap();
         let item = list_item.item().unwrap();
         let string_obj = item.downcast_ref::<gtk::StringObject>().unwrap();
@@ -492,7 +515,6 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         let img = hbox.first_child().unwrap().downcast::<gtk::Image>().unwrap();
         let lbl = img.next_sibling().unwrap().downcast::<Label>().unwrap();
         lbl.set_label(&name);
-
         if let Some(tex) = toy_textures_bind.get(name.as_str()) {
             img.set_paintable(Some(tex));
         } else {
@@ -501,95 +523,167 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     });
 
     let toy_drop = DropDown::new(Some(toy_list), gtk::Expression::NONE);
-    toy_drop.set_factory(Some(&toy_factory));
-    toy_drop.set_list_factory(Some(&toy_factory));
-
-    if let Some(pos) = toys.iter().position(|s| s == &initial_toy) {
+    toy_drop.set_factory(Some(&factory_toy));
+    toy_drop.set_list_factory(Some(&factory_toy));
+    if let Some(pos) = toys.iter().position(|t| t == &initial_toy) {
         toy_drop.set_selected(pos as u32);
     }
-    sidebar_content.append(&toy_drop);
+    row_toy.append(&lbl_toy);
+    row_toy.append(&toy_drop);
+    card_app.append(&row_toy);
 
-    // -- Scale --
-    let l_scale = Label::new(Some(&crate::i18n::t("scale")));
-    l_scale.add_css_class("section-label");
-    l_scale.set_halign(gtk::Align::Start);
-    sidebar_content.append(&l_scale);
+    // Échelle (Scale)
+    let row_scale = GtkBox::new(Orientation::Horizontal, 12);
+    row_scale.set_valign(gtk::Align::Center);
+    let lbl_scale = Label::new(Some(&crate::i18n::t("scale")));
+    lbl_scale.add_css_class("setting-label");
+    lbl_scale.set_hexpand(true);
+    lbl_scale.set_halign(gtk::Align::Start);
 
-    let scale_strs: Vec<&str> = SCALES.iter().map(|(s, _)| *s).collect();
-    let scale_list = StringList::new(&scale_strs);
+    let scale_names: Vec<&str> = SCALES.iter().map(|(n, _)| *n).collect();
+    let scale_list = StringList::new(&scale_names);
     let scale_drop = DropDown::new(Some(scale_list), gtk::Expression::NONE);
     if let Some(pos) = SCALES.iter().position(|(_, v)| (v - initial_scale).abs() < 0.1) {
         scale_drop.set_selected(pos as u32);
     }
-    sidebar_content.append(&scale_drop);
+    row_scale.append(&lbl_scale);
+    row_scale.append(&scale_drop);
+    card_app.append(&row_scale);
 
-    // -- Twitch --
-    let l_twitch = Label::new(Some(&crate::i18n::t("twitch_channel")));
-    l_twitch.add_css_class("section-label");
-    l_twitch.set_halign(gtk::Align::Start);
-    sidebar_content.append(&l_twitch);
+    settings_box.append(&card_app);
 
-    let twitch_entry = Entry::new();
-    twitch_entry.set_placeholder_text(Some(&crate::i18n::t("twitch_placeholder")));
-    twitch_entry.set_text(&initial_twitch);
-    sidebar_content.append(&twitch_entry);
+    // --- CARTE 2 : COMPORTEMENT & LANGUE ---
+    let card_beh = GtkBox::new(Orientation::Vertical, 12);
+    card_beh.add_css_class("card-box");
 
-    // -- Autostart Checkbox --
+    let card_beh_title = Label::new(Some(&crate::i18n::t("section_behavior")));
+    card_beh_title.add_css_class("card-title");
+    card_beh_title.set_halign(gtk::Align::Start);
+    card_beh.append(&card_beh_title);
+
+    // Mode
+    let row_mode = GtkBox::new(Orientation::Horizontal, 12);
+    row_mode.set_valign(gtk::Align::Center);
+    let lbl_mode = Label::new(Some(&crate::i18n::t("mode")));
+    lbl_mode.add_css_class("setting-label");
+    lbl_mode.set_hexpand(true);
+    lbl_mode.set_halign(gtk::Align::Start);
+
+    let mode_list = StringList::new(MODES);
+    let mode_drop = DropDown::new(Some(mode_list), gtk::Expression::NONE);
+    if let Some(pos) = MODES.iter().position(|&m| m == initial_mode) {
+        mode_drop.set_selected(pos as u32);
+    }
+    row_mode.append(&lbl_mode);
+    row_mode.append(&mode_drop);
+    card_beh.append(&row_mode);
+
+    // Langue
+    let row_lang = GtkBox::new(Orientation::Horizontal, 12);
+    row_lang.set_valign(gtk::Align::Center);
+    let lbl_lang = Label::new(Some(&crate::i18n::t("language")));
+    lbl_lang.add_css_class("setting-label");
+    lbl_lang.set_hexpand(true);
+    lbl_lang.set_halign(gtk::Align::Start);
+
+    let lang_names: Vec<&str> = LANGS.iter().map(|(n, _)| *n).collect();
+    let lang_list = StringList::new(&lang_names);
+    let lang_drop = DropDown::new(Some(lang_list), gtk::Expression::NONE);
+    let cur_l = if initial_lang.is_empty() { crate::i18n::current_lang() } else { initial_lang.as_str() };
+    if let Some(pos) = LANGS.iter().position(|(_, c)| *c == cur_l) {
+        lang_drop.set_selected(pos as u32);
+    }
+    row_lang.append(&lbl_lang);
+    row_lang.append(&lang_drop);
+    card_beh.append(&row_lang);
+
+    settings_box.append(&card_beh);
+
+    // --- CARTE 3 : SYSTÈME & INTÉGRATION ---
+    let card_sys = GtkBox::new(Orientation::Vertical, 12);
+    card_sys.add_css_class("card-box");
+
+    let card_sys_title = Label::new(Some(&crate::i18n::t("section_system")));
+    card_sys_title.add_css_class("card-title");
+    card_sys_title.set_halign(gtk::Align::Start);
+    card_sys.append(&card_sys_title);
+
+    // Démarrage auto
     let autostart_check = CheckButton::with_label(&crate::i18n::t("autostart"));
     autostart_check.set_active(autostart_get());
     autostart_check.connect_toggled(|btn| {
         autostart_set(btn.is_active());
     });
-    sidebar_content.append(&autostart_check);
+    card_sys.append(&autostart_check);
 
-    // -- Hint Banner (Drag & drop) --
-    let hint_banner = Label::new(Some(&crate::i18n::t("drag_hint")));
-    hint_banner.add_css_class("hint-banner");
-    hint_banner.set_wrap(true);
-    hint_banner.set_max_width_chars(28);
-    hint_banner.set_xalign(0.0);
-    sidebar_content.append(&hint_banner);
+    // Twitch
+    let row_twitch = GtkBox::new(Orientation::Vertical, 6);
+    let lbl_twitch = Label::new(Some(&crate::i18n::t("twitch_channel")));
+    lbl_twitch.add_css_class("setting-label");
+    lbl_twitch.set_halign(gtk::Align::Start);
 
-    // Spacer
-    let spacer = GtkBox::new(Orientation::Vertical, 0);
-    spacer.set_vexpand(true);
-    sidebar_content.append(&spacer);
+    let twitch_entry = Entry::new();
+    twitch_entry.set_placeholder_text(Some(&crate::i18n::t("twitch_placeholder")));
+    twitch_entry.set_text(&initial_twitch);
+    row_twitch.append(&lbl_twitch);
+    row_twitch.append(&twitch_entry);
+    card_sys.append(&row_twitch);
 
-    let save_btn = Button::with_label(&crate::i18n::t("save_mapping"));
-    save_btn.add_css_class("primary-btn");
-    sidebar_content.append(&save_btn);
+    settings_box.append(&card_sys);
+
+    // Barre d'actions en bas de la vue paramètres
+    let action_bar = GtkBox::new(Orientation::Horizontal, 12);
+    action_bar.set_margin_top(8);
 
     let close_btn = Button::with_label(&crate::i18n::t("close"));
     close_btn.add_css_class("close-btn");
-    sidebar_content.append(&close_btn);
+    action_bar.append(&close_btn);
 
-    let credits = Label::new(Some(&crate::i18n::t("credits")));
-    credits.set_wrap(true);
-    credits.set_max_width_chars(32);
-    credits.set_xalign(0.0);
-    credits.set_opacity(0.6);
-    credits.add_css_class("credits-label");
-    sidebar_content.append(&credits);
+    let act_spacer = GtkBox::new(Orientation::Horizontal, 0);
+    act_spacer.set_hexpand(true);
+    action_bar.append(&act_spacer);
 
-    sidebar_scroll.set_child(Some(&sidebar_content));
-    sidebar.append(&sidebar_scroll);
-    root.append(&sidebar);
+    let to_advanced_btn = Button::with_label(&crate::i18n::t("advanced_mode"));
+    to_advanced_btn.add_css_class("ghost-btn");
+    action_bar.append(&to_advanced_btn);
 
-    // ==========================================
-    // MAIN AREA (Éditeur de Sprites)
-    // ==========================================
-    let main_area = GtkBox::new(Orientation::Vertical, 0);
-    main_area.add_css_class("main-area");
-    main_area.set_hexpand(true);
-    main_area.set_vexpand(true);
+    settings_box.append(&action_bar);
 
-    let title = Label::new(Some(&format!("{} : {}", crate::i18n::t("sprite_editor_tab"), initial_skin)));
-    title.add_css_class("main-title");
-    title.set_halign(gtk::Align::Start);
-    main_area.append(&title);
+    page_settings.set_child(Some(&settings_box));
+    stack.add_named(&page_settings, Some("settings"));
 
-    let body = GtkBox::new(Orientation::Horizontal, 20);
-    body.set_vexpand(true);
+    // =========================================================================
+    // VUE 2 : ÉDITEUR DE SPRITES (Mode avancé)
+    // =========================================================================
+    let page_editor = GtkBox::new(Orientation::Vertical, 0);
+
+    // Barre d'en-tête de l'éditeur
+    let editor_bar = GtkBox::new(Orientation::Horizontal, 16);
+    editor_bar.add_css_class("editor-bar");
+
+    let back_btn = Button::with_label(&crate::i18n::t("back_to_settings"));
+    back_btn.add_css_class("ghost-btn");
+    editor_bar.append(&back_btn);
+
+    let editor_title = Label::new(Some(&format!("{} : {}", crate::i18n::t("sprite_editor_tab"), initial_skin)));
+    editor_title.add_css_class("editor-title");
+    editor_title.set_hexpand(true);
+    editor_title.set_halign(gtk::Align::Start);
+    editor_bar.append(&editor_title);
+
+    let save_btn = Button::with_label(&crate::i18n::t("save_mapping"));
+    save_btn.add_css_class("primary-btn");
+    editor_bar.append(&save_btn);
+
+    page_editor.append(&editor_bar);
+
+    // Contenu de l'éditeur : grille de tuiles + liste d'animations
+    let editor_body = GtkBox::new(Orientation::Horizontal, 20);
+    editor_body.set_margin_start(20);
+    editor_body.set_margin_end(20);
+    editor_body.set_margin_top(16);
+    editor_body.set_margin_bottom(16);
+    editor_body.set_vexpand(true);
 
     let grid = Grid::new();
     grid.set_row_spacing(6);
@@ -597,6 +691,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     grid.set_halign(gtk::Align::Center);
     grid.set_valign(gtk::Align::Center);
     grid.set_hexpand(true);
+
     let cells: Rc<RefCell<Vec<DrawingArea>>> = Rc::new(RefCell::new(Vec::new()));
 
     for r in 0..ROWS {
@@ -647,11 +742,11 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             cells.borrow_mut().push(da);
         }
     }
-    body.append(&grid);
+    editor_body.append(&grid);
 
-    // Panneau de droite : sélecteur d'animation + preview animée
+    // Panneau droit : prévisualisation animée + liste des clips
     let side_anims = GtkBox::new(Orientation::Vertical, 12);
-    side_anims.set_size_request(190, -1);
+    side_anims.set_size_request(200, -1);
 
     let preview_area = DrawingArea::new();
     preview_area.set_content_width(96);
@@ -689,23 +784,23 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     }
     side_anims.append(&preview_area);
 
-    let scroll = ScrolledWindow::new();
-    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scroll.set_vexpand(true);
+    let scroll_list = ScrolledWindow::new();
+    scroll_list.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll_list.set_vexpand(true);
 
-    let list = gtk::ListBox::new();
+    let anim_list = gtk::ListBox::new();
     for anim in ANIMS {
         let row = gtk::ListBoxRow::new();
         let lbl = Label::new(Some(anim));
         lbl.set_halign(gtk::Align::Start);
         row.set_child(Some(&lbl));
-        list.append(&row);
+        anim_list.append(&row);
     }
-    list.select_row(list.row_at_index(0).as_ref());
+    anim_list.select_row(anim_list.row_at_index(0).as_ref());
 
     {
         let active = active.clone();
-        list.connect_row_selected(move |_, row| {
+        anim_list.connect_row_selected(move |_, row| {
             if let Some(r) = row {
                 let idx = r.index() as usize;
                 if idx < ANIMS.len() {
@@ -714,25 +809,49 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
             }
         });
     }
-    scroll.set_child(Some(&list));
-    side_anims.append(&scroll);
-    body.append(&side_anims);
-    main_area.append(&body);
-    root.append(&main_area);
-    window.set_child(Some(&root));
+    scroll_list.set_child(Some(&anim_list));
+    side_anims.append(&scroll_list);
+    editor_body.append(&side_anims);
 
-    // Timer d'animation de la prévisualisation
+    page_editor.append(&editor_body);
+    stack.add_named(&page_editor, Some("editor"));
+
+    window.set_child(Some(&stack));
+
+    // Bascule dynamique entre Mode Paramètres et Mode Avancé
+    {
+        let stack_adv = stack.clone();
+        let win_adv = window.clone();
+        to_advanced_btn.connect_clicked(move |_| {
+            win_adv.set_default_size(editor_w, editor_h);
+            stack_adv.set_visible_child_name("editor");
+        });
+    }
+    {
+        let stack_back = stack.clone();
+        let win_back = window.clone();
+        back_btn.connect_clicked(move |_| {
+            win_back.set_default_size(settings_w, settings_h);
+            stack_back.set_visible_child_name("settings");
+        });
+    }
+
+    // Timer d'animation des prévisualisations
     {
         let preview_area = preview_area.clone();
         let preview_tick = preview_tick.clone();
+        let mini_preview = mini_preview.clone();
+        let mini_tick = mini_tick.clone();
         glib::timeout_add_local(std::time::Duration::from_millis(150), move || {
             *preview_tick.borrow_mut() += 1;
+            *mini_tick.borrow_mut() += 1;
             preview_area.queue_draw();
+            mini_preview.queue_draw();
             glib::ControlFlow::Continue
         });
     }
 
-    // Gestion du clic sur les cellules de la grille
+    // Gestion du clic sur les cellules de l'éditeur de sprites
     for (idx, da) in cells.borrow().iter().enumerate() {
         let c = (idx % COLS as usize) as i32;
         let r = (idx / COLS as usize) as i32;
@@ -770,7 +889,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         da.add_controller(click);
     }
 
-    // Changement de Mode
+    // Synchronisation des changements de paramètres avec Control
     {
         let control = control.clone();
         mode_drop.connect_selected_notify(move |drop| {
@@ -783,7 +902,6 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         });
     }
 
-    // Changement de Taille
     {
         let control = control.clone();
         scale_drop.connect_selected_notify(move |drop| {
@@ -796,7 +914,6 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         });
     }
 
-    // Changement de Langue
     {
         let control = control.clone();
         lang_drop.connect_selected_notify(move |drop| {
@@ -811,7 +928,6 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         });
     }
 
-    // Changement de Canal Twitch
     {
         let control = control.clone();
         twitch_entry.connect_activate(move |entry| {
@@ -821,7 +937,6 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         });
     }
 
-    // Changement de Pelote
     {
         let control = control.clone();
         let toys = toys.clone();
@@ -835,11 +950,11 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         });
     }
 
-    // Changement de Skin
+    // Changement de Skin (recharge aussi les sprites de l'éditeur)
     {
         let mapping = mapping.clone();
         let json_path = json_path.clone();
-        let title = title.clone();
+        let editor_title = editor_title.clone();
         let sheet = sheet.clone();
         let control = control.clone();
         let cells = cells.clone();
@@ -863,14 +978,14 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
                         }
                     }
 
-                    title.set_text(&format!("{} : {}", crate::i18n::t("sprite_editor_tab"), new_skin));
+                    editor_title.set_text(&format!("{} : {}", crate::i18n::t("sprite_editor_tab"), new_skin));
                     for da in cells.borrow().iter() { da.queue_draw(); }
                 }
             }
         });
     }
 
-    // Bouton Sauvegarder
+    // Sauvegarde du mapping JSON
     {
         let mapping = mapping.clone();
         let json_path = json_path.clone();
@@ -894,7 +1009,7 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         });
     }
 
-    // Bouton Fermer & Échap
+    // Fermeture avec Échap
     {
         let window = window.clone();
         close_btn.connect_clicked(move |_| window.close());

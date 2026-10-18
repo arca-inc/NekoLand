@@ -87,6 +87,31 @@ pub fn t(key: &str) -> String {
             3 => "Sprite-Editor",
             _ => "Sprite Editor",
         },
+        "advanced_mode" => match lang {
+            2 => "Éditeur de sprites (Avancé)",
+            3 => "Sprite-Editor (Erweitert)",
+            _ => "Sprite Editor (Advanced)",
+        },
+        "back_to_settings" => match lang {
+            2 => "← Paramètres",
+            3 => "← Einstellungen",
+            _ => "← Settings",
+        },
+        "section_appearance" => match lang {
+            2 => "Apparence",
+            3 => "Aussehen",
+            _ => "Appearance",
+        },
+        "section_behavior" => match lang {
+            2 => "Comportement",
+            3 => "Verhalten",
+            _ => "Behavior",
+        },
+        "section_system" => match lang {
+            2 => "Système & Intégration",
+            3 => "System & Integration",
+            _ => "System & Integration",
+        },
         "mode" => match lang {
             2 => "Comportement",
             3 => "Verhalten",

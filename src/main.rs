@@ -400,7 +400,7 @@ fn build_ui(app: &Application) {
         offset_y: 0.0,
     }));
 
-    let mut areas = Vec::with_capacity(monitors.len());
+    let areas: Rc<RefCell<Vec<DrawingArea>>> = Rc::new(RefCell::new(Vec::with_capacity(monitors.len())));
     let mut overlay_windows = Vec::with_capacity(monitors.len());
 
     for (i, monitor) in monitors.iter().enumerate() {
@@ -573,12 +573,50 @@ fn build_ui(app: &Application) {
             });
         }
 
-        // Contrôleur de drag GTK (GestureDrag) pour Linux et macOS
+        // Contrôleur de clic et de drag GTK pour Linux et macOS
         {
+            let click = gtk::GestureClick::new();
+            let pet_click = pet.clone();
+            let drag_click = drag_state.clone();
+            let all_areas_click = areas.clone();
+
+            click.connect_pressed(move |_g, _n, start_x, start_y| {
+                let gx = start_x + off_x;
+                let gy = start_y + off_y;
+                let p = pet_click.borrow();
+                if p.hit_test(gx, gy) {
+                    let mut ds = drag_click.borrow_mut();
+                    ds.dragging = true;
+                    ds.offset_x = gx - p.x;
+                    ds.offset_y = gy - p.y;
+                    drop(p);
+                    pet_click.borrow_mut().start_drag();
+                    for a in all_areas_click.borrow().iter() {
+                        a.queue_draw();
+                    }
+                }
+            });
+
+            let pet_rel = pet.clone();
+            let drag_rel = drag_state.clone();
+            let all_areas_rel = areas.clone();
+            click.connect_released(move |_g, _n, _x, _y| {
+                let mut ds = drag_rel.borrow_mut();
+                if ds.dragging {
+                    ds.dragging = false;
+                    pet_rel.borrow_mut().end_drag();
+                    for a in all_areas_rel.borrow().iter() {
+                        a.queue_draw();
+                    }
+                }
+            });
+
+            area.add_controller(click);
+
             let gesture = gtk::GestureDrag::new();
             let pet_begin = pet.clone();
             let drag_begin = drag_state.clone();
-            let area_begin = area.clone();
+            let all_areas_begin = areas.clone();
 
             gesture.connect_drag_begin(move |_g, start_x, start_y| {
                 let gx = start_x + off_x;
@@ -591,13 +629,15 @@ fn build_ui(app: &Application) {
                     ds.offset_y = gy - p.y;
                     drop(p);
                     pet_begin.borrow_mut().start_drag();
-                    area_begin.queue_draw();
+                    for a in all_areas_begin.borrow().iter() {
+                        a.queue_draw();
+                    }
                 }
             });
 
             let pet_move = pet.clone();
             let drag_move = drag_state.clone();
-            let area_move = area.clone();
+            let all_areas_move = areas.clone();
             gesture.connect_drag_update(move |_g, offset_x, offset_y| {
                 let ds = drag_move.borrow();
                 if ds.dragging {
@@ -607,19 +647,23 @@ fn build_ui(app: &Application) {
                     let target_x = cur_gx - ds.offset_x;
                     let target_y = cur_gy - ds.offset_y;
                     pet_move.borrow_mut().drag_to(target_x, target_y);
-                    area_move.queue_draw();
+                    for a in all_areas_move.borrow().iter() {
+                        a.queue_draw();
+                    }
                 }
             });
 
             let pet_end = pet.clone();
             let drag_end = drag_state.clone();
-            let area_end = area.clone();
+            let all_areas_end = areas.clone();
             gesture.connect_drag_end(move |_g, _offset_x, _offset_y| {
                 let mut ds = drag_end.borrow_mut();
                 if ds.dragging {
                     ds.dragging = false;
                     pet_end.borrow_mut().end_drag();
-                    area_end.queue_draw();
+                    for a in all_areas_end.borrow().iter() {
+                        a.queue_draw();
+                    }
                 }
             });
 
@@ -629,7 +673,7 @@ fn build_ui(app: &Application) {
         window.set_child(Some(&area));
         window.present();
 
-        areas.push(area);
+        areas.borrow_mut().push(area);
         overlay_windows.push(window);
     }
 
@@ -726,7 +770,8 @@ fn build_ui(app: &Application) {
                 last_saved = snapshot;
             }
 
-            // Gestion du Drag & Drop via souris globale (notamment sous Windows)
+            // Gestion du Drag & Drop via souris globale (spécifique Windows où WS_EX_TRANSPARENT ignore GTK)
+            #[cfg(target_os = "windows")]
             {
                 let c = cursor.lock().unwrap();
                 let mut ds = drag_state.borrow_mut();
@@ -779,13 +824,14 @@ fn build_ui(app: &Application) {
                             &gtk::cairo::RectangleInt::new(0, 0, s.w as i32, s.h as i32),
                         ));
                     } else if is_on_this_screen {
-                        let pad = 12.0;
-                        let rect = gtk::cairo::RectangleInt::new(
-                            (local_x - pad).floor() as i32,
-                            (local_y - pad).floor() as i32,
-                            (size + pad * 2.0).ceil() as i32,
-                            (size + pad * 2.0).ceil() as i32,
-                        );
+                        let pad = 24.0;
+                        let rx = ((local_x - pad).max(0.0)).floor() as i32;
+                        let ry = ((local_y - pad).max(0.0)).floor() as i32;
+                        let max_w = (s.w as i32 - rx).max(1);
+                        let max_h = (s.h as i32 - ry).max(1);
+                        let rw = ((size + pad * 2.0).ceil() as i32).min(max_w);
+                        let rh = ((size + pad * 2.0).ceil() as i32).min(max_h);
+                        let rect = gtk::cairo::RectangleInt::new(rx, ry, rw, rh);
                         surface.set_input_region(&gtk::cairo::Region::create_rectangle(&rect));
                     } else {
                         surface.set_input_region(&gtk::cairo::Region::create());
@@ -970,7 +1016,7 @@ fn build_ui(app: &Application) {
             }
 
             // Demande de redessin de toutes les zones
-            for area in &areas {
+            for area in areas.borrow().iter() {
                 area.queue_draw();
             }
 
