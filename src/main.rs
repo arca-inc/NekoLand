@@ -241,7 +241,11 @@ fn handle_cli(cfg: &mut config::Config, assets: &Path) {
 fn main() -> glib::ExitCode {
     let assets = assets_dir();
     let mut cfg = config::load();
+    let initial_cfg = cfg.clone();
     handle_cli(&mut cfg, &assets);
+    if cfg != initial_cfg {
+        config::save(&cfg);
+    }
 
     #[cfg(target_os = "windows")]
     if std::env::var("NEKO_DEBUG").is_ok() {
@@ -255,7 +259,7 @@ fn main() -> glib::ExitCode {
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.connect_activate(build_ui);
-    app.run()
+    app.run_with_args::<&str>(&[])
 }
 
 fn build_ui(app: &Application) {
