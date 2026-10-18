@@ -70,8 +70,23 @@ pub fn random_point_on_screens(screens: &[ScreenRect], margin_w: f64, margin_h: 
     (s.x + rand_unit() * max_w, s.y + rand_unit() * max_h)
 }
 
-/// Projette et clampe une boîte (sprite) sur l'écran le plus adapté,
-/// empêchant strictement le sprite de sortir ou d'errer dans un vide inter-écrans.
+/// Trouve l'écran qui contient le point (px, py).
+pub fn find_screen_for_point(px: f64, py: f64, screens: &[ScreenRect]) -> Option<ScreenRect> {
+    screens.iter().find(|s| s.contains_point(px, py)).copied()
+}
+
+/// Trouve l'écran géométriquement le plus proche d'un point (px, py).
+pub fn closest_screen(px: f64, py: f64, screens: &[ScreenRect]) -> Option<ScreenRect> {
+    screens.iter().min_by(|a, b| {
+        let da = (px - (a.x + a.w / 2.0)).powi(2) + (py - (a.y + a.h / 2.0)).powi(2);
+        let db = (px - (b.x + b.w / 2.0)).powi(2) + (py - (b.y + b.h / 2.0)).powi(2);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    }).copied()
+}
+
+/// Projette et clampe une boîte (sprite) sur l'ensemble des écrans physiques.
+/// Permet au sprite de franchir sans encombre les frontières entre écrans adjacents
+/// tout en l'empêchant strictement de sortir sur les bords extérieurs du bureau.
 pub fn clamp_to_screens(rx: f64, ry: f64, rw: f64, rh: f64, screens: &[ScreenRect]) -> (f64, f64) {
     if screens.is_empty() {
         return (rx.max(0.0), ry.max(0.0));
@@ -80,29 +95,96 @@ pub fn clamp_to_screens(rx: f64, ry: f64, rw: f64, rh: f64, screens: &[ScreenRec
     let cx = rx + rw / 2.0;
     let cy = ry + rh / 2.0;
 
-    // 1. Si le centre est sur un écran, on clampe sur cet écran
-    for s in screens {
-        if s.contains_point(cx, cy) {
-            return s.clamp_rect(rx, ry, rw, rh);
+    // 1. Si le centre est sur un écran réel, on autorise le sprite à chevaucher
+    // ou traverser vers un écran adjacent, mais on le retient sur les bords extérieurs dans le vide.
+    if let Some(s) = find_screen_for_point(cx, cy, screens) {
+        let mut clamped_x = rx;
+        let mut clamped_y = ry;
+
+        // Dépassement à gauche : autorisé seulement si un écran est présent à gauche
+        if rx < s.x && !is_point_on_any_screen(rx, cy, screens) {
+            clamped_x = s.x;
         }
+        // Dépassement à droite : autorisé seulement si un écran est présent à droite
+        if rx + rw > (s.x + s.w) && !is_point_on_any_screen(rx + rw, cy, screens) {
+            clamped_x = s.x + s.w - rw;
+        }
+        // Dépassement en haut : autorisé seulement si un écran est présent en haut
+        if ry < s.y && !is_point_on_any_screen(cx, ry, screens) {
+            clamped_y = s.y;
+        }
+        // Dépassement en bas : autorisé seulement si un écran est présent en bas
+        if ry + rh > (s.y + s.h) && !is_point_on_any_screen(cx, ry + rh, screens) {
+            clamped_y = s.y + s.h - rh;
+        }
+
+        return (clamped_x, clamped_y);
     }
 
-    // 2. Si le rectangle n'est sur aucun écran (ex: dans un trou ou hors limites),
-    // on trouve l'écran le plus proche du centre et on projette dedans
-    let mut best_dist = f64::MAX;
-    let mut best_screen = screens[0];
+    // 2. Si le centre est hors de tous les écrans (ex: dans un vide ou au-delà de la zone visible),
+    // on le projette sur l'écran le plus proche.
+    if let Some(s) = closest_screen(cx, cy, screens) {
+        s.clamp_rect(rx, ry, rw, rh)
+    } else {
+        (rx, ry)
+    }
+}
 
-    for s in screens {
-        let scx = s.x + s.w / 2.0;
-        let scy = s.y + s.h / 2.0;
-        let dist = (cx - scx).powi(2) + (cy - scy).powi(2);
-        if dist < best_dist {
-            best_dist = dist;
-            best_screen = *s;
+/// Téléporte un sprite depuis le bord d'un écran source vers le bord d'entrée
+/// correspondant d'un écran cible (utilisé lorsque les écrans ne sont pas adjacents ou décalés).
+pub fn teleport_between_screens(
+    from: &ScreenRect,
+    to: &ScreenRect,
+    cur_x: f64,
+    cur_y: f64,
+    sprite: f64,
+) -> (f64, f64) {
+    let from_cx = from.x + from.w / 2.0;
+    let from_cy = from.y + from.h / 2.0;
+    let to_cx = to.x + to.w / 2.0;
+    let to_cy = to.y + to.h / 2.0;
+
+    let diff_x = to_cx - from_cx;
+    let diff_y = to_cy - from_cy;
+
+    let new_x;
+    let new_y;
+
+    if diff_x.abs() >= diff_y.abs() {
+        // Déplacement horizontal prédominant
+        if diff_x > 0.0 {
+            // L'écran cible est à droite -> on entre par son bord gauche
+            new_x = to.x + 2.0;
+        } else {
+            // L'écran cible est à gauche -> on entre par son bord droit
+            new_x = (to.x + to.w - sprite - 2.0).max(to.x);
         }
+        // Conservation de la hauteur relative (Y proportionnel)
+        let rel_y = if from.h > sprite {
+            (cur_y - from.y) / (from.h - sprite)
+        } else {
+            0.5
+        };
+        new_y = to.y + rel_y.clamp(0.0, 1.0) * (to.h - sprite).max(0.0);
+    } else {
+        // Déplacement vertical prédominant
+        if diff_y > 0.0 {
+            // L'écran cible est en bas -> on entre par son bord haut
+            new_y = to.y + 2.0;
+        } else {
+            // L'écran cible est en haut -> on entre par son bord bas
+            new_y = (to.y + to.h - sprite - 2.0).max(to.y);
+        }
+        // Conservation de la position horizontale relative (X proportionnel)
+        let rel_x = if from.w > sprite {
+            (cur_x - from.x) / (from.w - sprite)
+        } else {
+            0.5
+        };
+        new_x = to.x + rel_x.clamp(0.0, 1.0) * (to.w - sprite).max(0.0);
     }
 
-    best_screen.clamp_rect(rx, ry, rw, rh)
+    (new_x, new_y)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -165,5 +247,43 @@ mod tests {
         let (lx, ly) = m.to_logical(1920.0, 1080.0);
         assert!((lx - 960.0).abs() < 1e-6);
         assert!((ly - 540.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_clamp_to_screens_adjacent_crossing() {
+        let s1 = ScreenRect::new(0.0, 0.0, 1920.0, 1080.0);
+        let s2 = ScreenRect::new(1920.0, 0.0, 1920.0, 1080.0);
+        let screens = vec![s1, s2];
+
+        // Sprite à cheval sur la frontière (x=1910, w=32 -> 1910 à 1942)
+        // Le centre est à 1926 (sur s2). Le côté gauche (1910) est sur s1.
+        let (cx, cy) = clamp_to_screens(1910.0, 500.0, 32.0, 32.0, &screens);
+        assert_eq!(cx, 1910.0); // Non bloqué car s1 est adjacent !
+        assert_eq!(cy, 500.0);
+
+        // Mur extérieur gauche de s1 -> bloqué à 0
+        let (cx, _) = clamp_to_screens(-20.0, 500.0, 32.0, 32.0, &screens);
+        assert_eq!(cx, 0.0);
+
+        // Mur extérieur droit de s2 -> bloqué à 3840 - 32 = 3808
+        let (cx, _) = clamp_to_screens(3850.0, 500.0, 32.0, 32.0, &screens);
+        assert_eq!(cx, 3840.0 - 32.0);
+    }
+
+    #[test]
+    fn test_teleport_between_screens() {
+        // Écran 1 (0..1920) et Écran 2 (3000..4920) séparés par un vide de 1080px
+        let s1 = ScreenRect::new(0.0, 0.0, 1920.0, 1080.0);
+        let s2 = ScreenRect::new(3000.0, 0.0, 1920.0, 1080.0);
+
+        // Téléportation vers s2 (vers la droite)
+        let (tx, ty) = teleport_between_screens(&s1, &s2, 1888.0, 540.0, 32.0);
+        assert_eq!(tx, 3000.0 + 2.0); // Entre par le bord gauche de s2
+        assert!((ty - 540.0).abs() <= 2.0);
+
+        // Téléportation vers s1 (vers la gauche)
+        let (tx, ty) = teleport_between_screens(&s2, &s1, 3000.0, 540.0, 32.0);
+        assert_eq!(tx, 1920.0 - 32.0 - 2.0); // Entre par le bord droit de s1
+        assert!((ty - 540.0).abs() <= 2.0);
     }
 }

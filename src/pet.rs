@@ -10,7 +10,10 @@
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
-use crate::util::{clamp_to_screens, ScreenRect};
+use crate::util::{
+    clamp_to_screens, closest_screen, find_screen_for_point, is_point_on_any_screen,
+    teleport_between_screens, ScreenRect,
+};
 
 /// Pas de la grille du sprite-sheet oneko en pixels (tuile 32 px + 1 px de marge).
 pub const GRID_STRIDE: i32 = 33;
@@ -184,6 +187,46 @@ impl Pet {
         (self.bounds_h - self.sprite).max(0.0)
     }
 
+    /// Détecte si le chat est adossé à un mur extérieur du bureau pour gratter.
+    fn check_outer_wall(&self) -> Option<&'static str> {
+        if self.screens.is_empty() {
+            let at_left = self.x <= 4.0;
+            let at_top = self.y <= 4.0;
+            let at_right = self.x >= self.max_x() - 4.0;
+            let at_bottom = self.y >= self.max_y() - 4.0;
+
+            if at_left {
+                return Some(SCRATCH_WALL_W);
+            } else if at_right {
+                return Some(SCRATCH_WALL_E);
+            } else if at_top {
+                return Some(SCRATCH_WALL_N);
+            } else if at_bottom {
+                return Some(SCRATCH_WALL_S);
+            }
+            return None;
+        }
+
+        let half = self.sprite / 2.0;
+        let cx = self.x + half;
+        let cy = self.y + half;
+        let pad = 6.0;
+
+        if !is_point_on_any_screen(self.x - pad, cy, &self.screens) {
+            return Some(SCRATCH_WALL_W);
+        }
+        if !is_point_on_any_screen(self.x + self.sprite + pad, cy, &self.screens) {
+            return Some(SCRATCH_WALL_E);
+        }
+        if !is_point_on_any_screen(cx, self.y - pad, &self.screens) {
+            return Some(SCRATCH_WALL_N);
+        }
+        if !is_point_on_any_screen(cx, self.y + self.sprite + pad, &self.screens) {
+            return Some(SCRATCH_WALL_S);
+        }
+        None
+    }
+
     /// Remplace le jeu de sprites (changement de skin à chaud).
     pub fn set_sprites(&mut self, sprites: Sprites) {
         self.sprites = sprites;
@@ -254,20 +297,9 @@ impl Pet {
         let distance = (delta_x * delta_x + delta_y * delta_y).sqrt();
 
         if distance <= 32.0 {
-            // Arrivé : s'il est au bord de l'écran, gratte le mur, sinon s'installe
-            let at_left = self.x <= 4.0;
-            let at_top = self.y <= 4.0;
-            let at_right = self.x >= self.max_x() - 4.0;
-            let at_bottom = self.y >= self.max_y() - 4.0;
-
-            if at_left {
-                self.current = SCRATCH_WALL_W;
-            } else if at_right {
-                self.current = SCRATCH_WALL_E;
-            } else if at_top {
-                self.current = SCRATCH_WALL_N;
-            } else if at_bottom {
-                self.current = SCRATCH_WALL_S;
+            // Arrivé : s'il est au bord extérieur d'un écran, gratte le mur, sinon s'installe
+            if let Some(wall) = self.check_outer_wall() {
+                self.current = wall;
             } else {
                 self.sleep_counter += 1;
                 self.current = match self.sleep_counter {
@@ -283,9 +315,35 @@ impl Pet {
             let cand_y = self.y - theta.sin() * STEP;
 
             if !self.screens.is_empty() {
-                let (cx, cy) = clamp_to_screens(cand_x, cand_y, self.sprite, self.sprite, &self.screens);
-                self.x = cx;
-                self.y = cy;
+                let (clamped_x, clamped_y) = clamp_to_screens(cand_x, cand_y, self.sprite, self.sprite, &self.screens);
+
+                let cur_s = find_screen_for_point(cx, cy, &self.screens)
+                    .or_else(|| closest_screen(cx, cy, &self.screens));
+                let tgt_s = find_screen_for_point(target_x, target_y, &self.screens)
+                    .or_else(|| closest_screen(target_x, target_y, &self.screens));
+
+                let dx_moved = (clamped_x - self.x).abs();
+                let dy_moved = (clamped_y - self.y).abs();
+                let dx_wanted = (cand_x - self.x).abs();
+                let dy_wanted = (cand_y - self.y).abs();
+
+                // Le chat voulait avancer vers la cible mais a été bloqué par un bord
+                let is_blocked = (dx_wanted > 0.5 && dx_moved < 0.1) || (dy_wanted > 0.5 && dy_moved < 0.1);
+
+                if let (Some(cs), Some(ts)) = (cur_s, tgt_s) {
+                    if cs != ts && is_blocked {
+                        // Téléportation vers l'écran cible car les écrans ne sont pas adjacents ou décalés
+                        let (tx, ty) = teleport_between_screens(&cs, &ts, self.x, self.y, self.sprite);
+                        self.x = tx;
+                        self.y = ty;
+                    } else {
+                        self.x = clamped_x;
+                        self.y = clamped_y;
+                    }
+                } else {
+                    self.x = clamped_x;
+                    self.y = clamped_y;
+                }
             } else {
                 self.x = cand_x.clamp(0.0, self.max_x());
                 self.y = cand_y.clamp(0.0, self.max_y());
