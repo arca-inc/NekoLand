@@ -23,6 +23,12 @@ impl NekoTray {
         c.mode = mode.to_string();
         c.version += 1;
     }
+
+    fn toggle_basket(&self) {
+        let mut c = self.control.lock().unwrap();
+        c.basket = !c.basket;
+        c.version += 1;
+    }
 }
 
 impl Tray for NekoTray {
@@ -42,11 +48,24 @@ impl Tray for NekoTray {
     fn menu(&self) -> Vec<MenuItem<Self>> {
         use ksni::menu::{StandardItem, SubMenu};
 
+        let basket_active = self.control.lock().unwrap().basket;
+
         vec![
             StandardItem {
                 label: crate::i18n::t("options").into(),
                 icon_name: "preferences-system".into(),
                 activate: Box::new(|t: &mut NekoTray| t.request_config()),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: if basket_active {
+                    crate::i18n::t("remove_basket").into()
+                } else {
+                    crate::i18n::t("place_basket").into()
+                },
+                icon_name: "object-select".into(),
+                activate: Box::new(|t: &mut NekoTray| t.toggle_basket()),
                 ..Default::default()
             }
             .into(),

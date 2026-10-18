@@ -127,6 +127,31 @@ pub fn t(key: &str) -> String {
             3 => "Spielzeug",
             _ => "Toy (Item)",
         },
+        "basket" => match lang {
+            2 => "Panier douillet",
+            3 => "Gemütliches Körbchen",
+            _ => "Cozy Basket",
+        },
+        "basket_desc" => match lang {
+            2 => "Un endroit douillet où le chat adore faire la sieste !",
+            3 => "Ein gemütlicher Ort, an dem die Katze gerne schläft!",
+            _ => "A cozy spot where the cat loves to nap!",
+        },
+        "place_basket" => match lang {
+            2 => "Poser le panier",
+            3 => "Körbchen platzieren",
+            _ => "Place Basket",
+        },
+        "remove_basket" => match lang {
+            2 => "Retirer le panier",
+            3 => "Körbchen entfernen",
+            _ => "Remove Basket",
+        },
+        "center_basket" => match lang {
+            2 => "Repositionner au centre",
+            3 => "Im Zentrum platzieren",
+            _ => "Center on Screen",
+        },
         "scale" => match lang {
             2 => "Taille du chat",
             3 => "Katzen-Größe",
@@ -244,6 +269,11 @@ pub fn t(key: &str) -> String {
             2 => "Définit le jouet (ex: wool, darkWool, boomerang)",
             3 => "Spielzeug festlegen",
             _ => "Set initial toy (e.g. wool, darkWool, boomerang)",
+        },
+        "cli_opt_basket" => match lang {
+            2 => "Active et pose le panier douillet pour le chat",
+            3 => "Gemütliches Körbchen für die Katze aktivieren und platzieren",
+            _ => "Enable and place the cozy basket for the cat",
         },
         "cli_opt_mode" => match lang {
             2 => "Mode de comportement : Pelote, Autonome, Souris, Sommeil",

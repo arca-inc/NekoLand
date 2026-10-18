@@ -16,6 +16,7 @@ use gtk::prelude::*;
 use gtk::{
     Application, ApplicationWindow, Box as GtkBox, Button, CheckButton, DrawingArea, DropDown,
     Entry, Grid, Label, Orientation, ScrolledWindow, Stack, StackTransitionType, StringList,
+    Switch,
 };
 use crate::config::Control;
 
@@ -144,9 +145,9 @@ fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64
 }
 
 pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
-    let (initial_skin, initial_toy, initial_mode, initial_scale, initial_twitch, initial_lang) = {
+    let (initial_skin, initial_toy, initial_mode, initial_scale, initial_twitch, initial_lang, initial_basket) = {
         let c = control.lock().unwrap();
-        (c.skin.clone(), c.toy.clone(), c.mode.clone(), c.scale, c.twitch_channel.clone(), c.lang.clone())
+        (c.skin.clone(), c.toy.clone(), c.mode.clone(), c.scale, c.twitch_channel.clone(), c.lang.clone(), c.basket)
     };
 
     let json_path = Rc::new(RefCell::new(assets.join("pets").join(format!("{initial_skin}.json"))));
@@ -578,6 +579,36 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     row_mode.append(&mode_drop);
     card_beh.append(&row_mode);
 
+    // Panier douillet
+    let row_basket = GtkBox::new(Orientation::Vertical, 6);
+    let top_basket = GtkBox::new(Orientation::Horizontal, 12);
+    top_basket.set_valign(gtk::Align::Center);
+
+    let basket_switch = Switch::new();
+    basket_switch.set_active(initial_basket);
+    basket_switch.set_valign(gtk::Align::Center);
+
+    let lbl_basket = Label::new(Some(&crate::i18n::t("basket")));
+    lbl_basket.add_css_class("setting-label");
+    lbl_basket.set_hexpand(true);
+    lbl_basket.set_halign(gtk::Align::Start);
+
+    let btn_center_basket = Button::with_label(&crate::i18n::t("center_basket"));
+    btn_center_basket.add_css_class("flat-btn");
+    btn_center_basket.set_sensitive(initial_basket);
+
+    top_basket.append(&lbl_basket);
+    top_basket.append(&btn_center_basket);
+    top_basket.append(&basket_switch);
+
+    let lbl_basket_sub = Label::new(Some(&crate::i18n::t("basket_desc")));
+    lbl_basket_sub.add_css_class("section-desc");
+    lbl_basket_sub.set_halign(gtk::Align::Start);
+
+    row_basket.append(&top_basket);
+    row_basket.append(&lbl_basket_sub);
+    card_beh.append(&row_basket);
+
     // Langue
     let row_lang = GtkBox::new(Orientation::Horizontal, 12);
     row_lang.set_valign(gtk::Align::Center);
@@ -911,6 +942,30 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
                 ctrl.scale = SCALES[idx].1;
                 ctrl.version += 1;
             }
+        });
+    }
+
+    // Gestion de l'activation et du centrage du panier douillet
+    {
+        let control = control.clone();
+        let btn_center = btn_center_basket.clone();
+        basket_switch.connect_active_notify(move |sw| {
+            let active = sw.is_active();
+            btn_center.set_sensitive(active);
+            let mut ctrl = control.lock().unwrap();
+            ctrl.basket = active;
+            ctrl.version += 1;
+        });
+    }
+
+    {
+        let control = control.clone();
+        btn_center_basket.connect_clicked(move |_| {
+            let mut ctrl = control.lock().unwrap();
+            ctrl.basket_x = -1.0;
+            ctrl.basket_y = -1.0;
+            ctrl.basket = true;
+            ctrl.version += 1;
         });
     }
 

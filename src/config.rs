@@ -18,6 +18,12 @@ pub struct Config {
     pub twitch_channel: String,
     /// Langue : "fr", "en", "de" ou "" (auto-détecté).
     pub lang: String,
+    /// Présence du panier douillet
+    pub basket: bool,
+    /// Position X du panier (-1.0 = centrage automatique)
+    pub basket_x: f64,
+    /// Position Y du panier (-1.0 = centrage automatique)
+    pub basket_y: f64,
 }
 
 impl Default for Config {
@@ -29,6 +35,9 @@ impl Default for Config {
             mode: "Pelote".into(),
             twitch_channel: String::new(),
             lang: String::new(),
+            basket: false,
+            basket_x: -1.0,
+            basket_y: -1.0,
         }
     }
 }
@@ -94,6 +103,9 @@ pub struct Control {
     pub mode: String,
     pub twitch_channel: String,
     pub lang: String,
+    pub basket: bool,
+    pub basket_x: f64,
+    pub basket_y: f64,
     /// Bumpé à chaque changement de réglage (déclenche le reload côté GTK).
     pub version: u64,
     /// Bumpé quand le tray demande l'ouverture de l'éditeur de sprites.
@@ -109,6 +121,9 @@ impl Control {
             mode: c.mode.clone(),
             twitch_channel: c.twitch_channel.clone(),
             lang: c.lang.clone(),
+            basket: c.basket,
+            basket_x: c.basket_x,
+            basket_y: c.basket_y,
             version: 0,
             open_config: 0,
         }
@@ -122,6 +137,9 @@ impl Control {
             mode: self.mode.clone(),
             twitch_channel: self.twitch_channel.clone(),
             lang: self.lang.clone(),
+            basket: self.basket,
+            basket_x: self.basket_x,
+            basket_y: self.basket_y,
         }
     }
 }

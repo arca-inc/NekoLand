@@ -36,6 +36,7 @@ pub fn spawn(
 
     let menu = Menu::new();
     let opt_item = MenuItem::new(crate::i18n::t("options").to_string(), true, None);
+    let basket_item = MenuItem::new(crate::i18n::t("basket").to_string(), true, None);
 
     let mode_sub = Submenu::new(crate::i18n::t("mode").to_string(), true);
     let mode_pelote = MenuItem::new(crate::i18n::t("mode_pelote").to_string(), true, None);
@@ -50,6 +51,7 @@ pub fn spawn(
     let quit_item = MenuItem::new(crate::i18n::t("quit").to_string(), true, None);
 
     let _ = menu.append(&opt_item);
+    let _ = menu.append(&basket_item);
     let _ = menu.append(&mode_sub);
     let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&quit_item);
@@ -66,6 +68,7 @@ pub fn spawn(
     Box::leak(Box::new(tray_icon));
 
     let opt_id = opt_item.id().clone();
+    let basket_id = basket_item.id().clone();
     let quit_id = quit_item.id().clone();
     let p_id = mode_pelote.id().clone();
     let a_id = mode_auto.id().clone();
@@ -77,6 +80,10 @@ pub fn spawn(
             if event.id == opt_id {
                 let mut c = control.lock().unwrap();
                 c.open_config += 1;
+            } else if event.id == basket_id {
+                let mut c = control.lock().unwrap();
+                c.basket = !c.basket;
+                c.version += 1;
             } else if event.id == quit_id {
                 std::process::exit(0);
             } else if event.id == p_id {

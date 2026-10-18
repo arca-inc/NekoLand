@@ -22,6 +22,7 @@ pub extern "C" fn gdk_win32_display_get_win32hcursor(_display: *mut std::ffi::c_
 pub mod config;
 mod dock;
 pub mod i18n;
+pub mod basket;
 pub mod mapper;
 mod mouse;
 pub mod pet;
@@ -49,6 +50,7 @@ use gtk::{Application, ApplicationWindow, DrawingArea};
 #[cfg(target_os = "linux")]
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
+use basket::Basket;
 use pet::{Pet, Sprites, State};
 use toy::Toy;
 use twitch::Target;
@@ -64,6 +66,7 @@ enum Routine {
     Free,
     Zoomies { targets: Vec<(f64, f64)>, idx: usize },
     DockPerimeter { waypoints: Vec<(f64, f64)>, idx: usize },
+    NapInBasket { ticks_remaining: i32 },
 }
 
 struct Dbg {
@@ -121,8 +124,15 @@ fn map_dock_to_logical(
     (wx - orig_x as f64, wy - orig_y as f64, ww, wh)
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum DragTarget {
+    None,
+    Pet,
+    Basket,
+}
+
 struct DragState {
-    dragging: bool,
+    target: DragTarget,
     offset_x: f64,
     offset_y: f64,
 }
@@ -149,6 +159,7 @@ fn handle_cli(cfg: &mut config::Config, assets: &Path) {
                 println!("  -v, --version            {}", i18n::t("cli_opt_version"));
                 println!("  -s, --skin <NAME>        {}", i18n::t("cli_opt_skin"));
                 println!("  -t, --toy <NAME>         {}", i18n::t("cli_opt_toy"));
+                println!("  -b, --basket             {}", i18n::t("cli_opt_basket"));
                 println!("  -m, --mode <MODE>        {}", i18n::t("cli_opt_mode"));
                 println!("  -z, --scale <FACTOR>     {}", i18n::t("cli_opt_scale"));
                 println!("  -c, --twitch <CHANNEL>   {}", i18n::t("cli_opt_twitch"));
@@ -197,6 +208,9 @@ fn handle_cli(cfg: &mut config::Config, assets: &Path) {
             "-t" | "--toy" if i + 1 < args.len() => {
                 i += 1;
                 cfg.toy = args[i].clone();
+            }
+            "-b" | "--basket" => {
+                cfg.basket = true;
             }
             "-m" | "--mode" if i + 1 < args.len() => {
                 i += 1;
@@ -361,6 +375,15 @@ fn build_ui(app: &Application) {
         toy.borrow_mut().hide();
     }
 
+    let basket = Rc::new(RefCell::new(Basket::new(
+        cfg.basket_x,
+        cfg.basket_y,
+        sprite_size,
+        cfg.basket,
+        screens.clone(),
+    )));
+    let basket_pix = Rc::new(RefCell::new(load_sprite(&assets.join("basket.png"))));
+
     let control = Arc::new(Mutex::new(config::Control::from_config(&cfg)));
     let scales = vec![1.0, 1.5, 2.0, 3.0];
     let modes: Vec<String> = ["Pelote", "Autonome", "Souris", "Sommeil"]
@@ -395,7 +418,7 @@ fn build_ui(app: &Application) {
     };
 
     let drag_state = Rc::new(RefCell::new(DragState {
-        dragging: false,
+        target: DragTarget::None,
         offset_x: 0.0,
         offset_y: 0.0,
     }));
@@ -496,12 +519,14 @@ fn build_ui(app: &Application) {
         area.set_hexpand(true);
         area.set_vexpand(true);
 
-        // Dessin du chat, de la pelote et du débug
+        // Dessin du panier, de la pelote, du chat et du débug
         {
             let pet = pet.clone();
             let pet_pix = pet_pix.clone();
             let toy = toy.clone();
             let toy_pix = toy_pix.clone();
+            let basket = basket.clone();
+            let basket_pix = basket_pix.clone();
             let scale = scale.clone();
             let dbg = dbg.clone();
 
@@ -516,6 +541,15 @@ fn build_ui(app: &Application) {
                     let _ = cr.paint();
                     let _ = cr.restore();
                 };
+
+                // Dessin du panier douillet (en dessous du chat)
+                if let Some(bp) = basket_pix.borrow().as_ref() {
+                    let b = basket.borrow();
+                    if b.active {
+                        let (fx, fy) = b.current_frame();
+                        blit(bp, fx, fy, b.x, b.y);
+                    }
+                }
 
                 if let Some(tp) = toy_pix.borrow().as_ref() {
                     let t = toy.borrow();
@@ -577,6 +611,7 @@ fn build_ui(app: &Application) {
         {
             let click = gtk::GestureClick::new();
             let pet_click = pet.clone();
+            let basket_click = basket.clone();
             let drag_click = drag_state.clone();
             let all_areas_click = areas.clone();
 
@@ -586,7 +621,7 @@ fn build_ui(app: &Application) {
                 let p = pet_click.borrow();
                 if p.hit_test(gx, gy) {
                     let mut ds = drag_click.borrow_mut();
-                    ds.dragging = true;
+                    ds.target = DragTarget::Pet;
                     ds.offset_x = gx - p.x;
                     ds.offset_y = gy - p.y;
                     drop(p);
@@ -594,20 +629,51 @@ fn build_ui(app: &Application) {
                     for a in all_areas_click.borrow().iter() {
                         a.queue_draw();
                     }
+                } else {
+                    drop(p);
+                    let b = basket_click.borrow();
+                    if b.hit_test(gx, gy) {
+                        let mut ds = drag_click.borrow_mut();
+                        ds.target = DragTarget::Basket;
+                        ds.offset_x = gx - b.x;
+                        ds.offset_y = gy - b.y;
+                        drop(b);
+                        basket_click.borrow_mut().start_drag();
+                        for a in all_areas_click.borrow().iter() {
+                            a.queue_draw();
+                        }
+                    }
                 }
             });
 
             let pet_rel = pet.clone();
+            let basket_rel = basket.clone();
             let drag_rel = drag_state.clone();
             let all_areas_rel = areas.clone();
+            let control_rel = control.clone();
             click.connect_released(move |_g, _n, _x, _y| {
                 let mut ds = drag_rel.borrow_mut();
-                if ds.dragging {
-                    ds.dragging = false;
-                    pet_rel.borrow_mut().end_drag();
-                    for a in all_areas_rel.borrow().iter() {
-                        a.queue_draw();
+                match ds.target {
+                    DragTarget::Pet => {
+                        ds.target = DragTarget::None;
+                        pet_rel.borrow_mut().end_drag();
+                        for a in all_areas_rel.borrow().iter() {
+                            a.queue_draw();
+                        }
                     }
+                    DragTarget::Basket => {
+                        ds.target = DragTarget::None;
+                        let mut b = basket_rel.borrow_mut();
+                        b.end_drag();
+                        let mut ctrl = control_rel.lock().unwrap();
+                        ctrl.basket_x = b.x;
+                        ctrl.basket_y = b.y;
+                        ctrl.version += 1;
+                        for a in all_areas_rel.borrow().iter() {
+                            a.queue_draw();
+                        }
+                    }
+                    DragTarget::None => {}
                 }
             });
 
@@ -615,6 +681,7 @@ fn build_ui(app: &Application) {
 
             let gesture = gtk::GestureDrag::new();
             let pet_begin = pet.clone();
+            let basket_begin = basket.clone();
             let drag_begin = drag_state.clone();
             let all_areas_begin = areas.clone();
 
@@ -624,7 +691,7 @@ fn build_ui(app: &Application) {
                 let p = pet_begin.borrow();
                 if p.hit_test(gx, gy) {
                     let mut ds = drag_begin.borrow_mut();
-                    ds.dragging = true;
+                    ds.target = DragTarget::Pet;
                     ds.offset_x = gx - p.x;
                     ds.offset_y = gy - p.y;
                     drop(p);
@@ -632,38 +699,95 @@ fn build_ui(app: &Application) {
                     for a in all_areas_begin.borrow().iter() {
                         a.queue_draw();
                     }
+                } else {
+                    drop(p);
+                    let b = basket_begin.borrow();
+                    if b.hit_test(gx, gy) {
+                        let mut ds = drag_begin.borrow_mut();
+                        ds.target = DragTarget::Basket;
+                        ds.offset_x = gx - b.x;
+                        ds.offset_y = gy - b.y;
+                        drop(b);
+                        basket_begin.borrow_mut().start_drag();
+                        for a in all_areas_begin.borrow().iter() {
+                            a.queue_draw();
+                        }
+                    }
                 }
             });
 
             let pet_move = pet.clone();
+            let basket_move = basket.clone();
             let drag_move = drag_state.clone();
             let all_areas_move = areas.clone();
             gesture.connect_drag_update(move |_g, offset_x, offset_y| {
                 let ds = drag_move.borrow();
-                if ds.dragging {
-                    let start_point = _g.start_point().unwrap_or((0.0, 0.0));
-                    let cur_gx = start_point.0 + offset_x + off_x;
-                    let cur_gy = start_point.1 + offset_y + off_y;
-                    let target_x = cur_gx - ds.offset_x;
-                    let target_y = cur_gy - ds.offset_y;
-                    pet_move.borrow_mut().drag_to(target_x, target_y);
-                    for a in all_areas_move.borrow().iter() {
-                        a.queue_draw();
+                let start_point = _g.start_point().unwrap_or((0.0, 0.0));
+                let cur_gx = start_point.0 + offset_x + off_x;
+                let cur_gy = start_point.1 + offset_y + off_y;
+                let target_x = cur_gx - ds.offset_x;
+                let target_y = cur_gy - ds.offset_y;
+
+                match ds.target {
+                    DragTarget::Pet => {
+                        pet_move.borrow_mut().drag_to(target_x, target_y);
+                        for a in all_areas_move.borrow().iter() {
+                            a.queue_draw();
+                        }
                     }
+                    DragTarget::Basket => {
+                        basket_move.borrow_mut().drag_to(target_x, target_y);
+                        for a in all_areas_move.borrow().iter() {
+                            a.queue_draw();
+                        }
+                    }
+                    DragTarget::None => {}
                 }
             });
 
             let pet_end = pet.clone();
+            let basket_end = basket.clone();
             let drag_end = drag_state.clone();
             let all_areas_end = areas.clone();
+            let control_end = control.clone();
+            let scale_end = scale.clone();
+
             gesture.connect_drag_end(move |_g, _offset_x, _offset_y| {
                 let mut ds = drag_end.borrow_mut();
-                if ds.dragging {
-                    ds.dragging = false;
-                    pet_end.borrow_mut().end_drag();
-                    for a in all_areas_end.borrow().iter() {
-                        a.queue_draw();
+                match ds.target {
+                    DragTarget::Pet => {
+                        ds.target = DragTarget::None;
+                        pet_end.borrow_mut().end_drag();
+                        // Si le chat est lâché tout près du panier actif, il se pose dedans !
+                        let b = basket_end.borrow();
+                        if b.active {
+                            let (bcx, bcy) = b.center();
+                            let half = pet::TILE as f64 * scale_end.get() / 2.0;
+                            let mut p = pet_end.borrow_mut();
+                            let (pcx, pcy) = (p.x + half, p.y + half);
+                            if ((pcx - bcx).powi(2) + (pcy - bcy).powi(2)).sqrt() < 40.0 {
+                                p.x = b.x;
+                                p.y = b.y;
+                                p.startle();
+                            }
+                        }
+                        for a in all_areas_end.borrow().iter() {
+                            a.queue_draw();
+                        }
                     }
+                    DragTarget::Basket => {
+                        ds.target = DragTarget::None;
+                        let mut b = basket_end.borrow_mut();
+                        b.end_drag();
+                        let mut ctrl = control_end.lock().unwrap();
+                        ctrl.basket_x = b.x;
+                        ctrl.basket_y = b.y;
+                        ctrl.version += 1;
+                        for a in all_areas_end.borrow().iter() {
+                            a.queue_draw();
+                        }
+                    }
+                    DragTarget::None => {}
                 }
             });
 
@@ -685,6 +809,7 @@ fn build_ui(app: &Application) {
         let app = app.clone();
         let pet = pet.clone();
         let toy = toy.clone();
+        let basket = basket.clone();
         let pet_pix = pet_pix.clone();
         let toy_pix = toy_pix.clone();
         let scale = scale.clone();
@@ -715,9 +840,20 @@ fn build_ui(app: &Application) {
 
         glib::timeout_add_local(Duration::from_millis(100), move || {
             // Rechargement à chaud si le tray ou dashboard a modifié la configuration
-            let (version, skin, toyname, sc, cur_mode, cur_lang, open_config) = {
+            let (version, skin, toyname, sc, cur_mode, cur_lang, cur_basket, cur_bx, cur_by, open_config) = {
                 let c = control.lock().unwrap();
-                (c.version, c.skin.clone(), c.toy.clone(), c.scale, c.mode.clone(), c.lang.clone(), c.open_config)
+                (
+                    c.version,
+                    c.skin.clone(),
+                    c.toy.clone(),
+                    c.scale,
+                    c.mode.clone(),
+                    c.lang.clone(),
+                    c.basket,
+                    c.basket_x,
+                    c.basket_y,
+                    c.open_config,
+                )
             };
 
             if open_config != seen_open {
@@ -743,6 +879,16 @@ fn build_ui(app: &Application) {
                 } else {
                     toy.borrow_mut().hide();
                 }
+
+                basket.borrow_mut().active = cur_basket;
+                if cur_bx >= 0.0 && cur_by >= 0.0 {
+                    basket.borrow_mut().x = cur_bx;
+                    basket.borrow_mut().y = cur_by;
+                } else if cur_bx < 0.0 {
+                    basket.borrow_mut().center_on_screen();
+                }
+                basket.borrow_mut().set_size(size);
+
                 mode = cur_mode.clone();
                 current_skin = skin;
                 json_mtime = file_mtime(&pets_json(&assets, &current_skin));
@@ -777,19 +923,34 @@ fn build_ui(app: &Application) {
                 let mut ds = drag_state.borrow_mut();
                 if c.valid && c.left_down {
                     let (gx, gy) = map_cursor_to_logical(c.x, c.y, &monitor_mappings, orig_x, orig_y);
-                    if !ds.dragging {
+                    if ds.target == DragTarget::None {
                         if pet.borrow().hit_test(gx, gy) {
-                            ds.dragging = true;
+                            ds.target = DragTarget::Pet;
                             ds.offset_x = gx - pet.borrow().x;
                             ds.offset_y = gy - pet.borrow().y;
                             pet.borrow_mut().start_drag();
+                        } else if basket.borrow().hit_test(gx, gy) {
+                            ds.target = DragTarget::Basket;
+                            ds.offset_x = gx - basket.borrow().x;
+                            ds.offset_y = gy - basket.borrow().y;
+                            basket.borrow_mut().start_drag();
                         }
-                    } else {
+                    } else if ds.target == DragTarget::Pet {
                         pet.borrow_mut().drag_to(gx - ds.offset_x, gy - ds.offset_y);
+                    } else if ds.target == DragTarget::Basket {
+                        basket.borrow_mut().drag_to(gx - ds.offset_x, gy - ds.offset_y);
                     }
-                } else if !c.left_down && ds.dragging {
-                    ds.dragging = false;
-                    pet.borrow_mut().end_drag();
+                } else if !c.left_down && ds.target != DragTarget::None {
+                    if ds.target == DragTarget::Pet {
+                        pet.borrow_mut().end_drag();
+                    } else if ds.target == DragTarget::Basket {
+                        basket.borrow_mut().end_drag();
+                        let mut ctrl = control.lock().unwrap();
+                        ctrl.basket_x = basket.borrow().x;
+                        ctrl.basket_y = basket.borrow().y;
+                        ctrl.version += 1;
+                    }
+                    ds.target = DragTarget::None;
                 }
             }
 
@@ -807,34 +968,68 @@ fn build_ui(app: &Application) {
             let cat_center = (px + half, py + half);
 
             // Mise à jour dynamique de l'input region de GTK
-            // Permet le click-through partout sur l'écran sauf sur le sprite du chat
+            // Permet le click-through partout sur l'écran sauf sur le chat et le panier
+            let is_dragging = drag_state.borrow().target != DragTarget::None;
+
             for (idx, win) in overlay_windows.iter().enumerate() {
                 if let Some(surface) = win.surface() {
                     let s = screens[idx];
-                    let local_x = px - s.x;
-                    let local_y = py - s.y;
-                    let is_on_this_screen = local_x + size >= 0.0
-                        && local_x <= s.w
-                        && local_y + size >= 0.0
-                        && local_y <= s.h;
-
-                    if drag_state.borrow().dragging {
+                    if is_dragging {
                         // Pendant le drag, on capture l'input sur toute la fenêtre
                         surface.set_input_region(&gtk::cairo::Region::create_rectangle(
                             &gtk::cairo::RectangleInt::new(0, 0, s.w as i32, s.h as i32),
                         ));
-                    } else if is_on_this_screen {
-                        let pad = 24.0;
-                        let rx = ((local_x - pad).max(0.0)).floor() as i32;
-                        let ry = ((local_y - pad).max(0.0)).floor() as i32;
-                        let max_w = (s.w as i32 - rx).max(1);
-                        let max_h = (s.h as i32 - ry).max(1);
-                        let rw = ((size + pad * 2.0).ceil() as i32).min(max_w);
-                        let rh = ((size + pad * 2.0).ceil() as i32).min(max_h);
-                        let rect = gtk::cairo::RectangleInt::new(rx, ry, rw, rh);
-                        surface.set_input_region(&gtk::cairo::Region::create_rectangle(&rect));
                     } else {
-                        surface.set_input_region(&gtk::cairo::Region::create());
+                        let mut region_opt: Option<gtk::cairo::Region> = None;
+                        let local_x = px - s.x;
+                        let local_y = py - s.y;
+                        let is_pet_here = local_x + size >= 0.0
+                            && local_x <= s.w
+                            && local_y + size >= 0.0
+                            && local_y <= s.h;
+
+                        if is_pet_here {
+                            let pad = 24.0;
+                            let rx = ((local_x - pad).max(0.0)).floor() as i32;
+                            let ry = ((local_y - pad).max(0.0)).floor() as i32;
+                            let max_w = (s.w as i32 - rx).max(1);
+                            let max_h = (s.h as i32 - ry).max(1);
+                            let rw = ((size + pad * 2.0).ceil() as i32).min(max_w);
+                            let rh = ((size + pad * 2.0).ceil() as i32).min(max_h);
+                            let rect = gtk::cairo::RectangleInt::new(rx, ry, rw, rh);
+                            region_opt = Some(gtk::cairo::Region::create_rectangle(&rect));
+                        }
+
+                        let b = basket.borrow();
+                        if b.active {
+                            let lbx = b.x - s.x;
+                            let lby = b.y - s.y;
+                            let is_basket_here = lbx + size >= 0.0
+                                && lbx <= s.w
+                                && lby + size >= 0.0
+                                && lby <= s.h;
+                            if is_basket_here {
+                                let pad = 24.0;
+                                let rx = ((lbx - pad).max(0.0)).floor() as i32;
+                                let ry = ((lby - pad).max(0.0)).floor() as i32;
+                                let max_w = (s.w as i32 - rx).max(1);
+                                let max_h = (s.h as i32 - ry).max(1);
+                                let rw = ((size + pad * 2.0).ceil() as i32).min(max_w);
+                                let rh = ((size + pad * 2.0).ceil() as i32).min(max_h);
+                                let rect = gtk::cairo::RectangleInt::new(rx, ry, rw, rh);
+                                if let Some(r) = region_opt.as_mut() {
+                                    let _ = r.union_rectangle(&rect);
+                                } else {
+                                    region_opt = Some(gtk::cairo::Region::create_rectangle(&rect));
+                                }
+                            }
+                        }
+
+                        if let Some(r) = region_opt {
+                            surface.set_input_region(&r);
+                        } else {
+                            surface.set_input_region(&gtk::cairo::Region::create());
+                        }
                     }
                 }
             }
@@ -849,7 +1044,19 @@ fn build_ui(app: &Application) {
                 (twx, twy)
             } else if mode == "Sommeil" {
                 behavior = "sommeil";
-                cat_center
+                if basket.borrow().active {
+                    let bc = basket.borrow().center();
+                    let dist = ((cat_center.0 - bc.0).powi(2) + (cat_center.1 - bc.1).powi(2)).sqrt();
+                    if dist > 20.0 {
+                        bc
+                    } else {
+                        pet.borrow_mut().x = basket.borrow().x;
+                        pet.borrow_mut().y = basket.borrow().y;
+                        cat_center
+                    }
+                } else {
+                    cat_center
+                }
             } else if mode == "Souris" {
                 let c = cursor.lock().unwrap();
                 if c.valid {
@@ -924,6 +1131,23 @@ fn build_ui(app: &Application) {
                 } else {
                     let mut next_routine: Option<Routine> = None;
                     let target = match &mut routine {
+                        Routine::NapInBasket { ticks_remaining } => {
+                            behavior = "sieste";
+                            *ticks_remaining -= 1;
+                            let bx = basket.borrow().x;
+                            let by = basket.borrow().y;
+                            pet.borrow_mut().x = bx;
+                            pet.borrow_mut().y = by;
+                            if *ticks_remaining <= 0 {
+                                next_routine = Some(Routine::Free);
+                                let pt = util::random_point_on_screens(&screens, size, size);
+                                wander.0 = pt.0 + half;
+                                wander.1 = pt.1 + half;
+                                wander.2 = 80.0 + util::rand_unit() * 120.0;
+                                pet.borrow_mut().startle();
+                            }
+                            cat_center
+                        }
                         Routine::Zoomies { targets, idx } => {
                             behavior = "zoomies";
                             let t = targets[*idx];
@@ -944,7 +1168,13 @@ fn build_ui(app: &Application) {
                             behavior = "errance";
                             wander.2 -= 1.0;
                             if wander.2 < 0.0 {
-                                if util::rand_unit() < 0.10 {
+                                // Si le panier est actif, 35% de chance de s'y rendre pour une sieste
+                                if basket.borrow().active && util::rand_unit() < 0.35 {
+                                    let bc = basket.borrow().center();
+                                    wander.0 = bc.0;
+                                    wander.1 = bc.1;
+                                    wander.2 = 100.0;
+                                } else if util::rand_unit() < 0.10 {
                                     let n = 3 + (util::rand_unit() * 3.0) as usize;
                                     let targets: Vec<(f64, f64)> = (0..n)
                                         .map(|_| {
@@ -958,6 +1188,19 @@ fn build_ui(app: &Application) {
                                     wander.0 = pt.0 + half;
                                     wander.1 = pt.1 + half;
                                     wander.2 = 80.0 + util::rand_unit() * 120.0;
+                                }
+                            }
+
+                            // Détection de l'arrivée au panier actif pour commencer la sieste
+                            if basket.borrow().active {
+                                let bc = basket.borrow().center();
+                                let dist = ((px + half - bc.0).powi(2) + (py + half - bc.1).powi(2)).sqrt();
+                                if dist <= 24.0 && wander.2 < 95.0 {
+                                    pet.borrow_mut().x = basket.borrow().x;
+                                    pet.borrow_mut().y = basket.borrow().y;
+                                    next_routine = Some(Routine::NapInBasket {
+                                        ticks_remaining: 120 + (util::rand_unit() * 80.0) as i32,
+                                    });
                                 }
                             }
                             (wander.0, wander.1)
@@ -978,7 +1221,19 @@ fn build_ui(app: &Application) {
                         toy.borrow_mut().spawn();
                         pet.borrow_mut().startle();
                     }
-                    cat_center
+                    if basket.borrow().active {
+                        let bc = basket.borrow().center();
+                        let dist = ((cat_center.0 - bc.0).powi(2) + (cat_center.1 - bc.1).powi(2)).sqrt();
+                        if dist > 20.0 {
+                            bc
+                        } else {
+                            pet.borrow_mut().x = basket.borrow().x;
+                            pet.borrow_mut().y = basket.borrow().y;
+                            cat_center
+                        }
+                    } else {
+                        cat_center
+                    }
                 } else {
                     behavior = "attente";
                     cat_center
@@ -1014,6 +1269,9 @@ fn build_ui(app: &Application) {
                     (wx, wy, ww, wh, rem)
                 });
             }
+
+            // Animation du panier douillet
+            basket.borrow_mut().tick();
 
             // Demande de redessin de toutes les zones
             for area in areas.borrow().iter() {
