@@ -3,7 +3,7 @@
 //! Présente une interface de réglages épurée par défaut, avec l'éditeur de
 //! sprites accessible en mode Avancé, dimensionnée dynamiquement selon l'écran.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::path::{Path, PathBuf};
@@ -928,10 +928,16 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
         da.add_controller(click);
     }
 
+    let updating_ui = Rc::new(Cell::new(false));
+
     // Synchronisation des changements de paramètres avec Control
     {
         let control = control.clone();
+        let updating_ui_mode = updating_ui.clone();
         mode_drop.connect_selected_notify(move |drop| {
+            if updating_ui_mode.get() {
+                return;
+            }
             let idx = drop.selected() as usize;
             if idx < MODES.len() {
                 let mut ctrl = control.lock().unwrap();
@@ -943,7 +949,11 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
 
     {
         let control = control.clone();
+        let updating_ui_scale = updating_ui.clone();
         scale_drop.connect_selected_notify(move |drop| {
+            if updating_ui_scale.get() {
+                return;
+            }
             let idx = drop.selected() as usize;
             if idx < SCALES.len() {
                 let mut ctrl = control.lock().unwrap();
@@ -980,20 +990,89 @@ pub fn open(app: &Application, assets: PathBuf, control: Arc<Mutex<Control>>) {
     {
         let control = control.clone();
         let mode_list = mode_list.clone();
+        let mode_drop = mode_drop.clone();
+        let updating_ui_lang = updating_ui.clone();
+
+        let window = window.clone();
+        let app_sub = app_sub.clone();
+        let hint_lbl = hint_lbl.clone();
+        let card_app_title = card_app_title.clone();
+        let lbl_skin = lbl_skin.clone();
+        let lbl_toy = lbl_toy.clone();
+        let lbl_scale = lbl_scale.clone();
+        let card_beh_title = card_beh_title.clone();
+        let lbl_mode = lbl_mode.clone();
+        let lbl_basket = lbl_basket.clone();
+        let btn_center_basket = btn_center_basket.clone();
+        let lbl_basket_sub = lbl_basket_sub.clone();
+        let lbl_lang = lbl_lang.clone();
+        let card_sys_title = card_sys_title.clone();
+        let autostart_check = autostart_check.clone();
+        let lbl_twitch = lbl_twitch.clone();
+        let twitch_entry = twitch_entry.clone();
+        let close_btn = close_btn.clone();
+        let to_advanced_btn = to_advanced_btn.clone();
+        let back_btn = back_btn.clone();
+        let save_btn = save_btn.clone();
+        let editor_title = editor_title.clone();
+        let skin_drop = skin_drop.clone();
+
         lang_drop.connect_selected_notify(move |drop| {
+            if updating_ui_lang.get() {
+                return;
+            }
             let idx = drop.selected() as usize;
             if idx < LANGS.len() {
                 let code = LANGS[idx].1;
                 crate::i18n::set_lang(code);
-                let mut ctrl = control.lock().unwrap();
-                ctrl.lang = code.to_string();
-                ctrl.version += 1;
+                {
+                    let mut ctrl = control.lock().unwrap();
+                    ctrl.lang = code.to_string();
+                    ctrl.version += 1;
+                }
 
-                // Rafraîchir les libellés traduits des modes de comportement
+                updating_ui_lang.set(true);
+
+                // Rafraîchir les libellés traduits des modes sans déclencher le changement de mode
+                let cur_mode_sel = mode_drop.selected();
                 for (i, (key, _)) in MODES.iter().enumerate() {
                     let text = crate::i18n::t(key);
                     mode_list.splice(i as u32, 1, &[&text]);
                 }
+                if cur_mode_sel < MODES.len() as u32 {
+                    mode_drop.set_selected(cur_mode_sel);
+                }
+
+                // Mettre à jour tous les libellés de l'interface dans la nouvelle langue
+                window.set_title(Some(&crate::i18n::t("dashboard_title")));
+                app_sub.set_label(&crate::i18n::t("dashboard_title"));
+                hint_lbl.set_label(&crate::i18n::t("drag_hint"));
+                card_app_title.set_label(&crate::i18n::t("section_appearance"));
+                lbl_skin.set_label(&crate::i18n::t("skin"));
+                lbl_toy.set_label(&crate::i18n::t("toy"));
+                lbl_scale.set_label(&crate::i18n::t("scale"));
+                card_beh_title.set_label(&crate::i18n::t("section_behavior"));
+                lbl_mode.set_label(&crate::i18n::t("mode"));
+                lbl_basket.set_label(&crate::i18n::t("basket"));
+                btn_center_basket.set_label(&crate::i18n::t("center_basket"));
+                lbl_basket_sub.set_label(&crate::i18n::t("basket_desc"));
+                lbl_lang.set_label(&crate::i18n::t("language"));
+                card_sys_title.set_label(&crate::i18n::t("section_system"));
+                autostart_check.set_label(Some(&crate::i18n::t("autostart")));
+                lbl_twitch.set_label(&crate::i18n::t("twitch_channel"));
+                twitch_entry.set_placeholder_text(Some(&crate::i18n::t("twitch_placeholder")));
+                close_btn.set_label(&crate::i18n::t("close"));
+                to_advanced_btn.set_label(&crate::i18n::t("advanced_mode"));
+                back_btn.set_label(&crate::i18n::t("back_to_settings"));
+                save_btn.set_label(&crate::i18n::t("save_mapping"));
+
+                if let Some(item) = skin_drop.selected_item() {
+                    if let Ok(string_obj) = item.downcast::<gtk::StringObject>() {
+                        editor_title.set_text(&format!("{} : {}", crate::i18n::t("sprite_editor_tab"), string_obj.string()));
+                    }
+                }
+
+                updating_ui_lang.set(false);
             }
         });
     }
