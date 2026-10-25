@@ -1,11 +1,12 @@
-//! Suivi de la fenêtre active (Hyprland, via `hyprctl activewindow -j`) pour le
+//! Suivi de la fenêtre active (Hyprland, via socket ou `hyprctl activewindow -j`) pour le
 //! mode « dock » : si la même fenêtre reste focus assez longtemps, le chat va se
 //! promener sous son bord inférieur.
 //!
-//! Dégradation gracieuse : si `hyprctl` est absent (autre compositeur), la
+//! Dégradation gracieuse : si le compositeur ne supporte pas la requête, la
 //! fenêtre est simplement marquée invalide et le mode dock ne s'active jamais.
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[cfg(not(target_os = "windows"))]
@@ -42,10 +43,15 @@ impl Focus {
 }
 
 /// Lance le thread de sondage (1 Hz) et renvoie l'état partagé.
-pub fn spawn() -> Arc<Mutex<Focus>> {
+pub fn spawn(enabled: Arc<AtomicBool>) -> Arc<Mutex<Focus>> {
     let shared = Arc::new(Mutex::new(Focus::empty()));
     let out = shared.clone();
     std::thread::spawn(move || loop {
+        if !enabled.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+
         let info = query();
         {
             let mut f = out.lock().unwrap();
@@ -100,7 +106,6 @@ fn query() -> Option<Win> {
             if GetWindowRect(hwnd, &mut rect) != 0 {
                 let w = (rect.right - rect.left) as f64;
                 let h = (rect.bottom - rect.top) as f64;
-                // Si la fenêtre a des dimensions valides (exclut le bureau ou des widgets vides)
                 if w > 0.0 && h > 0.0 {
                     return Some(Win {
                         addr: format!("{:x}", hwnd as usize),
@@ -119,25 +124,52 @@ fn query() -> Option<Win> {
 
     #[cfg(not(target_os = "windows"))]
     {
+        if let Some(win) = query_hyprland_socket() {
+            return Some(win);
+        }
+
         let out = std::process::Command::new("hyprctl")
             .args(["activewindow", "-j"])
             .output()
             .ok()?;
         let v: Value = serde_json::from_slice(&out.stdout).ok()?;
-        let addr = v.get("address")?.as_str()?.to_string();
-        if addr.is_empty() {
-            return None;
-        }
-        let at = v.get("at")?.as_array()?;
-        let size = v.get("size")?.as_array()?;
-        Some(Win {
-            addr,
-            class: v.get("class").and_then(Value::as_str).unwrap_or("").to_string(),
-            title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
-            x: at.first()?.as_f64()?,
-            y: at.get(1)?.as_f64()?,
-            w: size.first()?.as_f64()?,
-            h: size.get(1)?.as_f64()?,
-        })
+        parse_hyprland_json(&v)
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn query_hyprland_socket() -> Option<Win> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let xdg = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    let his = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
+    let sock_path = format!("{}/hypr/{}/.socket.sock", xdg, his);
+    let mut stream = UnixStream::connect(sock_path).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(100))).ok();
+    stream.set_write_timeout(Some(Duration::from_millis(100))).ok();
+    stream.write_all(b"j/activewindow").ok()?;
+    let mut resp = Vec::with_capacity(1024);
+    stream.read_to_end(&mut resp).ok()?;
+    let v: Value = serde_json::from_slice(&resp).ok()?;
+    parse_hyprland_json(&v)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn parse_hyprland_json(v: &Value) -> Option<Win> {
+    let addr = v.get("address")?.as_str()?.to_string();
+    if addr.is_empty() {
+        return None;
+    }
+    let at = v.get("at")?.as_array()?;
+    let size = v.get("size")?.as_array()?;
+    Some(Win {
+        addr,
+        class: v.get("class").and_then(Value::as_str).unwrap_or("").to_string(),
+        title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+        x: at.first()?.as_f64()?,
+        y: at.get(1)?.as_f64()?,
+        w: size.first()?.as_f64()?,
+        h: size.get(1)?.as_f64()?,
+    })
 }

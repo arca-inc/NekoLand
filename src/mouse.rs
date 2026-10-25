@@ -4,6 +4,7 @@
 //! la saisie / le drag sous Windows et les compositeurs compatibles.
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug)]
@@ -25,11 +26,16 @@ impl Cursor {
     }
 }
 
-/// Lance le thread de sondage (~30 Hz) et renvoie l'état partagé.
-pub fn spawn() -> Arc<Mutex<Cursor>> {
+/// Lance le thread de sondage (~30 Hz quand actif) et renvoie l'état partagé.
+pub fn spawn(enabled: Arc<AtomicBool>) -> Arc<Mutex<Cursor>> {
     let shared = Arc::new(Mutex::new(Cursor::empty()));
     let out = shared.clone();
     std::thread::spawn(move || loop {
+        if !enabled.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+
         match query() {
             Some((x, y, left_down)) => {
                 let mut c = out.lock().unwrap();
@@ -42,6 +48,9 @@ pub fn spawn() -> Arc<Mutex<Cursor>> {
                 let mut c = out.lock().unwrap();
                 c.valid = false;
                 c.left_down = false;
+                drop(c);
+                std::thread::sleep(Duration::from_millis(250));
+                continue;
             }
         }
         std::thread::sleep(Duration::from_millis(33));
@@ -70,6 +79,10 @@ fn query() -> Option<(f64, f64, bool)> {
 
     #[cfg(not(target_os = "windows"))]
     {
+        if let Some(pos) = query_hyprland_socket() {
+            return Some((pos.0, pos.1, false));
+        }
+
         let out = std::process::Command::new("hyprctl")
             .args(["cursorpos", "-j"])
             .output()
@@ -79,4 +92,24 @@ fn query() -> Option<(f64, f64, bool)> {
         let y = v.get("y")?.as_f64()?;
         Some((x, y, false))
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn query_hyprland_socket() -> Option<(f64, f64)> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let xdg = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    let his = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
+    let sock_path = format!("{}/hypr/{}/.socket.sock", xdg, his);
+    let mut stream = UnixStream::connect(sock_path).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(50))).ok();
+    stream.set_write_timeout(Some(Duration::from_millis(50))).ok();
+    stream.write_all(b"j/cursorpos").ok()?;
+    let mut resp = Vec::with_capacity(256);
+    stream.read_to_end(&mut resp).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&resp).ok()?;
+    let x = v.get("x")?.as_f64()?;
+    let y = v.get("y")?.as_f64()?;
+    Some((x, y))
 }

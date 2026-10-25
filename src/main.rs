@@ -276,6 +276,14 @@ fn main() -> glib::ExitCode {
     app.run_with_args::<&str>(&[])
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputRegionState {
+    Empty,
+    Full,
+    Box(i32, i32, i32, i32),
+    TwoBoxes((i32, i32, i32, i32), (i32, i32, i32, i32)),
+}
+
 fn build_ui(app: &Application) {
     let display = gtk::gdk::Display::default().expect("aucun display GDK");
     let cfg = config::load();
@@ -803,8 +811,13 @@ fn build_ui(app: &Application) {
         overlay_windows.push(window);
     }
 
-    let focus = dock::spawn();
-    let cursor = mouse::spawn();
+    let mouse_enabled = Arc::new(std::sync::atomic::AtomicBool::new(
+        cfg.mode == "Souris" || cfg!(target_os = "windows"),
+    ));
+    let dock_enabled = Arc::new(std::sync::atomic::AtomicBool::new(cfg.mode == "Autonome"));
+
+    let focus = dock::spawn(dock_enabled.clone());
+    let cursor = mouse::spawn(mouse_enabled.clone());
 
     // ---- Boucle principale d'animation à ~10 FPS ----
     {
@@ -820,6 +833,8 @@ fn build_ui(app: &Application) {
         let assets = assets.clone();
         let focus = focus.clone();
         let cursor = cursor.clone();
+        let mouse_enabled = mouse_enabled.clone();
+        let dock_enabled = dock_enabled.clone();
         let dbg = dbg.clone();
         let areas = areas.clone();
         let overlay_windows = overlay_windows.clone();
@@ -838,7 +853,10 @@ fn build_ui(app: &Application) {
         let mut wander = (init_pos.0, init_pos.1, 0.0_f64);
         let mut routine = Routine::Free;
         let mut dbg_tick: u64 = 0;
-        let mut last_saved = cfg.clone();
+        let mut last_saved_version = 0u64;
+        let mut tick_counter: u64 = 0;
+        let mut last_input_states = vec![InputRegionState::Empty; overlay_windows.len()];
+        let mut prev_screen_has_entity = vec![true; overlay_windows.len()];
 
         glib::timeout_add_local(Duration::from_millis(100), move || {
             // Rechargement à chaud si le tray ou dashboard a modifié la configuration
@@ -894,12 +912,21 @@ fn build_ui(app: &Application) {
                 mode = cur_mode.clone();
                 current_skin = skin;
                 json_mtime = file_mtime(&pets_json(&assets, &current_skin));
+
+                mouse_enabled.store(
+                    mode == "Souris" || cfg!(target_os = "windows"),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                dock_enabled.store(mode == "Autonome", std::sync::atomic::Ordering::Relaxed);
             }
 
-            let m = file_mtime(&pets_json(&assets, &current_skin));
-            if m != json_mtime {
-                json_mtime = m;
-                pet.borrow_mut().set_sprites(load_mapping(&assets, &current_skin));
+            tick_counter += 1;
+            if tick_counter % 20 == 0 {
+                let m = file_mtime(&pets_json(&assets, &current_skin));
+                if m != json_mtime {
+                    json_mtime = m;
+                    pet.borrow_mut().set_sprites(load_mapping(&assets, &current_skin));
+                }
             }
 
             if cur_mode != mode {
@@ -909,13 +936,18 @@ fn build_ui(app: &Application) {
                 } else {
                     toy.borrow_mut().hide();
                 }
+                mouse_enabled.store(
+                    mode == "Souris" || cfg!(target_os = "windows"),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                dock_enabled.store(mode == "Autonome", std::sync::atomic::Ordering::Relaxed);
             }
 
             // Sauvegarde automatique dès modification
-            let snapshot = { control.lock().unwrap().to_config() };
-            if snapshot != last_saved {
+            if version != last_saved_version {
+                let snapshot = { control.lock().unwrap().to_config() };
                 config::save(&snapshot);
-                last_saved = snapshot;
+                last_saved_version = version;
             }
 
             // Gestion du Drag & Drop via souris globale (spécifique Windows où WS_EX_TRANSPARENT ignore GTK)
@@ -969,20 +1001,17 @@ fn build_ui(app: &Application) {
             let half = size / 2.0;
             let cat_center = (px + half, py + half);
 
-            // Mise à jour dynamique de l'input region de GTK
-            // Permet le click-through partout sur l'écran sauf sur le chat et le panier
+            // Mise à jour dynamique et mise en cache de l'input region de GTK
+            // Permet le click-through partout sur l'écran sauf sur le chat et le panier,
+            // sans émettre d'appels Wayland redondants lorsque rien n'a bougé.
             let is_dragging = drag_state.borrow().target != DragTarget::None;
 
             for (idx, win) in overlay_windows.iter().enumerate() {
                 if let Some(surface) = win.surface() {
                     let s = screens[idx];
-                    if is_dragging {
-                        // Pendant le drag, on capture l'input sur toute la fenêtre
-                        surface.set_input_region(&gtk::cairo::Region::create_rectangle(
-                            &gtk::cairo::RectangleInt::new(0, 0, s.w as i32, s.h as i32),
-                        ));
+                    let state = if is_dragging {
+                        InputRegionState::Full
                     } else {
-                        let mut region_opt: Option<gtk::cairo::Region> = None;
                         let local_x = px - s.x;
                         let local_y = py - s.y;
                         let is_pet_here = local_x + size >= 0.0
@@ -990,7 +1019,7 @@ fn build_ui(app: &Application) {
                             && local_y + size >= 0.0
                             && local_y <= s.h;
 
-                        if is_pet_here {
+                        let pet_box = if is_pet_here {
                             let pad = 24.0;
                             let rx = ((local_x - pad).max(0.0)).floor() as i32;
                             let ry = ((local_y - pad).max(0.0)).floor() as i32;
@@ -998,12 +1027,13 @@ fn build_ui(app: &Application) {
                             let max_h = (s.h as i32 - ry).max(1);
                             let rw = ((size + pad * 2.0).ceil() as i32).min(max_w);
                             let rh = ((size + pad * 2.0).ceil() as i32).min(max_h);
-                            let rect = gtk::cairo::RectangleInt::new(rx, ry, rw, rh);
-                            region_opt = Some(gtk::cairo::Region::create_rectangle(&rect));
-                        }
+                            Some((rx, ry, rw, rh))
+                        } else {
+                            None
+                        };
 
                         let b = basket.borrow();
-                        if b.active {
+                        let basket_box = if b.active {
                             let lbx = b.x - s.x;
                             let lby = b.y - s.y;
                             let is_basket_here = lbx + size >= 0.0
@@ -1018,19 +1048,44 @@ fn build_ui(app: &Application) {
                                 let max_h = (s.h as i32 - ry).max(1);
                                 let rw = ((size + pad * 2.0).ceil() as i32).min(max_w);
                                 let rh = ((size + pad * 2.0).ceil() as i32).min(max_h);
-                                let rect = gtk::cairo::RectangleInt::new(rx, ry, rw, rh);
-                                if let Some(r) = region_opt.as_mut() {
-                                    let _ = r.union_rectangle(&rect);
-                                } else {
-                                    region_opt = Some(gtk::cairo::Region::create_rectangle(&rect));
-                                }
+                                Some((rx, ry, rw, rh))
+                            } else {
+                                None
                             }
-                        }
-
-                        if let Some(r) = region_opt {
-                            surface.set_input_region(&r);
                         } else {
-                            surface.set_input_region(&gtk::cairo::Region::create());
+                            None
+                        };
+
+                        match (pet_box, basket_box) {
+                            (None, None) => InputRegionState::Empty,
+                            (Some(p), None) => InputRegionState::Box(p.0, p.1, p.2, p.3),
+                            (None, Some(b)) => InputRegionState::Box(b.0, b.1, b.2, b.3),
+                            (Some(p), Some(b)) => InputRegionState::TwoBoxes(p, b),
+                        }
+                    };
+
+                    if state != last_input_states[idx] {
+                        last_input_states[idx] = state;
+                        match state {
+                            InputRegionState::Empty => {
+                                surface.set_input_region(&gtk::cairo::Region::create());
+                            }
+                            InputRegionState::Full => {
+                                surface.set_input_region(&gtk::cairo::Region::create_rectangle(
+                                    &gtk::cairo::RectangleInt::new(0, 0, s.w as i32, s.h as i32),
+                                ));
+                            }
+                            InputRegionState::Box(rx, ry, rw, rh) => {
+                                let rect = gtk::cairo::RectangleInt::new(rx, ry, rw, rh);
+                                surface.set_input_region(&gtk::cairo::Region::create_rectangle(&rect));
+                            }
+                            InputRegionState::TwoBoxes(r1, r2) => {
+                                let reg = gtk::cairo::Region::create_rectangle(
+                                    &gtk::cairo::RectangleInt::new(r1.0, r1.1, r1.2, r1.3),
+                                );
+                                let _ = reg.union_rectangle(&gtk::cairo::RectangleInt::new(r2.0, r2.1, r2.2, r2.3));
+                                surface.set_input_region(&reg);
+                            }
                         }
                     }
                 }
@@ -1275,9 +1330,31 @@ fn build_ui(app: &Application) {
             // Animation du panier douillet
             basket.borrow_mut().tick();
 
-            // Demande de redessin de toutes les zones
-            for area in areas.borrow().iter() {
-                area.queue_draw();
+            // Demande de redessin sélectif : uniquement sur les écrans occupés ou venant d'être libérés
+            let force_redraw_all = debug || is_dragging || (version != seen_version);
+            let (tx, ty, toy_active) = {
+                let t = toy.borrow();
+                (t.x, t.y, t.active)
+            };
+            let (bx, by, basket_active) = {
+                let b = basket.borrow();
+                (b.x, b.y, b.active)
+            };
+
+            let areas_ref = areas.borrow();
+            for (idx, area) in areas_ref.iter().enumerate() {
+                let s = screens[idx];
+                let overlaps = |ex: f64, ey: f64| -> bool {
+                    ex + size >= s.x && ex <= s.x + s.w && ey + size >= s.y && ey <= s.y + s.h
+                };
+                let has_entity = overlaps(px, py)
+                    || (basket_active && overlaps(bx, by))
+                    || (toy_active && overlaps(tx, ty));
+
+                if force_redraw_all || has_entity || prev_screen_has_entity[idx] {
+                    area.queue_draw();
+                }
+                prev_screen_has_entity[idx] = has_entity;
             }
 
             glib::ControlFlow::Continue
@@ -1289,7 +1366,11 @@ fn build_ui(app: &Application) {
         let shared = shared.clone();
         let control = control.clone();
         let mut last_channel = cfg.twitch_channel.clone();
-        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
 
         if !last_channel.is_empty() {
             rt.spawn(twitch::run(last_channel.clone(), shared.clone(), total_w, total_h));
